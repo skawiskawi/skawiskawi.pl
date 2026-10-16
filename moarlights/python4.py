@@ -1,6 +1,4 @@
-from __future__ import annotations
 import os
-import io
 import sys
 import ssl
 import json
@@ -22,13 +20,6 @@ import numpy as np
 import mss
 import customtkinter as ctk
 
-# Obsługa przetwarzania okładek Spotify w pamięci RAM
-try:
-    from PIL import Image
-    HAS_PIL = True
-except ImportError:
-    HAS_PIL = False
-
 # Opcjonalna obsługa globalnych skrótów klawiszowych macOS w tle
 try:
     from pynput import keyboard as pynput_keyboard
@@ -37,12 +28,11 @@ except ImportError:
     HAS_PYNPUT = False
 
 # =====================================================================
-# KONFIGURACJA HOME ASSISTANT, SPOTIFY API, SIECI I ŚWIATEŁ
+# KONFIGURACJA HOME ASSISTANT, SIECI I ŚWIATEŁ
 # =====================================================================
 HA_URL = "http://localhost:8123"
 HA_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjNjg5YmRiMjMxZjI0NGJhODk0ZDZmOTRkNzU1NWVlYiIsImlhdCI6MTc5MjAzODA3NCwiZXhwIjoyMTA3Mzk4MDc0fQ.ZQu_rZ2WDVTkeiDdciNQFs8wRf8Sz1nzm8UiDw5wvDs"
 
-SPOTIFY_API_URL = "https://skawiskawi.pl/api/spotify"
 MOBILE_PORT = 8765
 PRESETS_FILE = Path.home() / ".spatial_ambient_presets.json"
 
@@ -119,20 +109,6 @@ def kelvin_to_rgb(kelvin: int) -> tuple[int, int, int]:
     )
 
 
-def hsl_to_rgb(h_deg: float, s_norm: float = 0.85, l_norm: float = 0.55) -> tuple[int, int, int]:
-    """Konwertuje HSL (z algorytmu skawiskawi.pl) na krotkę RGB (0-255)."""
-    r, g, b = colorsys.hls_to_rgb((h_deg % 360.0) / 360.0, l_norm, s_norm)
-    return (int(np.clip(r * 255, 0, 255)), int(np.clip(g * 255, 0, 255)), int(np.clip(b * 255, 0, 255)))
-
-
-def lerp_hue_deg(current: float, target: float, factor: float) -> float:
-    """Płynna interpolacja kąta Hue po najkrótszym łuku koła barw (0-360)."""
-    diff = (target - current) % 360.0
-    if diff > 180.0:
-        diff -= 360.0
-    return (current + diff * factor) % 360.0
-
-
 def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{int(np.clip(rgb[0], 0, 255)):02x}{int(np.clip(rgb[1], 0, 255)):02x}{int(np.clip(rgb[2], 0, 255)):02x}"
 
@@ -142,703 +118,6 @@ def hex_to_rgb(hex_str: str) -> tuple[int, int, int]:
     if len(h) == 6:
         return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
     return (255, 255, 255)
-
-
-# =====================================================================
-# SILNIK SYNCHRONIZACJI SPOTIFY (OKŁADKI + BPM + STROBOSKOP + EKG)
-# =====================================================================
-class SpotifyBeatSync:
-    """
-    Odtwarza mechanikę ze strony skawiskawi.pl:
-    - pobiera aktualny utwór i BPM z endpointu /api/spotify (wspierając się WebSocketem HA),
-    - ekstrahuje 2 dominujące odcienie (Hue) z okładki 64x64 metodą koszykową co 25°,
-    - zarządza losowymi błyskami (Strobe Flashes) w rytm BPM oraz trybem EKG podczas pauzy.
-    """
-    def __init__(self, engine: "AmbientEngine"):
-        self.engine = engine
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "SpatialAmbientStudio/7.0"})
-
-        self.is_playing = False
-        self.track_id = None
-        self.title = "Oczekiwanie na Spotify..."
-        self.artist = "Włącz muzykę"
-        self.album_url = ""
-        self.bpm = 120.0
-
-        # Kolory bazowe (w stopniach Hue 0-360, dokładnie jak w skawiskawi.pl)
-        self.target_hue1 = 200.0
-        self.target_hue2 = 300.0
-        self.current_hue1 = 200.0
-        self.current_hue2 = 300.0
-        self.is_grayscale = False
-
-        self.color1_rgb = hsl_to_rgb(200.0, 0.85, 0.55)
-        self.color2_rgb = hsl_to_rgb(300.0, 0.85, 0.55)
-
-        # Konfiguracja błysków (Strobe)
-        self.strobe_density = 2          # Ile losowych lamp błyska naraz (1 - 6)
-        self.ceiling_strobe_enabled = False  # Czy sufit też ma ostro błyskać (False = sufit robi tylko płynne bloby)
-        self.strobe_flash_white_mix = 0.45   # Domieszka czystej bieli do błysku (efekt .strobe-flash)
-
-        # Timery choreografii
-        self.next_strobe_ts = time.perf_counter() + 0.75
-        self.active_flashes = {}  # entity_id -> timestamp wygaśnięcia błysku
-        self.last_beat_pulse_ts = 0.0
-        self._force_poll_event = threading.Event()
-
-        self.worker = threading.Thread(target=self._poll_loop, daemon=True)
-        self.worker.start()
-
-    def trigger_immediate_poll(self):
-        """Wywoływane przez WebSocket HA, gdy encja media_player zmieni stan."""
-        self._force_poll_event.set()
-
-    def extract_palette_from_image_bytes(self, raw_bytes: bytes) -> dict | None:
-        """Dokładny port funkcji extractPaletteFromUrl() ze skawiskawi.pl na NumPy."""
-        if not HAS_PIL or not raw_bytes:
-            return None
-        try:
-            img = Image.open(io.BytesIO(raw_bytes)).convert("RGB").resize((64, 64), Image.Resampling.BILINEAR)
-            arr = np.asarray(img, dtype=np.float32) / 255.0
-            pixels = arr.reshape(-1, 3)[::4]  # Co 4. piksel (identyczny krok jak i += 16 na tablicy RGBA w JS)
-
-            buckets = {}
-            total_sat = 0.0
-            sample_count = 0
-
-            for r, g, b in pixels:
-                max_c = max(r, g, b)
-                min_c = min(r, g, b)
-                lum = (max_c + min_c) * 0.5
-                if lum < 0.12 or lum > 0.90:
-                    continue
-
-                sat = 0.0
-                if max_c != min_c:
-                    sat = (max_c - min_c) / (2.0 - max_c - min_c) if lum > 0.5 else (max_c - min_c) / (max_c + min_c)
-
-                total_sat += sat
-                sample_count += 1
-
-                hue = 0.0
-                if max_c != min_c:
-                    d = max_c - min_c
-                    if max_c == r:
-                        hue = (g - b) / d + (6.0 if g < b else 0.0)
-                    elif max_c == g:
-                        hue = (b - r) / d + 2.0
-                    else:
-                        hue = (r - g) / d + 4.0
-                    hue = round(hue * 60.0)
-
-                h_bucket = int(round(hue / 25.0) * 25) % 360
-                score = 1.0 + (sat * 3.0)
-                buckets[h_bucket] = buckets.get(h_bucket, 0.0) + score
-
-            avg_sat = (total_sat / sample_count) if sample_count > 0 else 0.0
-            if avg_sat < 0.12:
-                return {"is_grayscale": True, "c1": 200.0, "c2": 300.0}
-
-            if not buckets:
-                return None
-
-            sorted_buckets = sorted(buckets.items(), key=lambda x: x[1], reverse=True)
-            primary_hue = float(sorted_buckets[0][0])
-            secondary_hue = (primary_hue + 60.0) % 360.0
-
-            for cand_hue, _score in sorted_buckets[1:]:
-                diff = abs(cand_hue - primary_hue)
-                if 35.0 < diff < 325.0:
-                    secondary_hue = float(cand_hue)
-                    break
-
-            return {"is_grayscale": False, "c1": primary_hue, "c2": secondary_hue}
-        except Exception:
-            return None
-
-    def _poll_loop(self):
-        while self.engine.running:
-            try:
-                res = self.session.get(SPOTIFY_API_URL, timeout=3.5)
-                if res.status_code == 200:
-                    data = res.json()
-                    title = data.get("title")
-                    if title:
-                        self.title = title
-                        self.artist = data.get("artist") or "Spotify"
-                        self.is_playing = bool(data.get("isPlaying", False))
-
-                        new_id = data.get("id") or title
-                        if new_id != self.track_id:
-                            self.track_id = new_id
-                            raw_tempo = data.get("tempo")
-                            self.bpm = float(np.clip(raw_tempo if raw_tempo else 120.0, 50.0, 220.0))
-
-                        new_cover = data.get("albumImageUrl") or ""
-                        if new_cover and new_cover != self.album_url:
-                            self.album_url = new_cover
-                            img_res = self.session.get(new_cover, timeout=3.5)
-                            if img_res.status_code == 200:
-                                palette = self.extract_palette_from_image_bytes(img_res.content)
-                                if palette:
-                                    self.is_grayscale = palette["is_grayscale"]
-                                    self.target_hue1 = palette["c1"]
-                                    self.target_hue2 = palette["c2"]
-                    else:
-                        self.is_playing = False
-                        self.title = "Brak aktywności"
-                        self.artist = "Spotify (Tryb EKG)"
-            except Exception:
-                pass
-
-            # Czeka 3.5 sekundy lub budzi się natychmiast na sygnał z Home Assistanta
-            self._force_poll_event.wait(timeout=3.5)
-            self._force_poll_event.clear()
-
-    def step_frame(self, now: float):
-        """Wywoływane z pętli głównej silnika (~25 FPS) w trybie SPOTIFY."""
-        # 1. Płynna interpolacja odcieni Hue (dokładnie jak lerpHue w renderCanvas na stronie)
-        self.current_hue1 = lerp_hue_deg(self.current_hue1, self.target_hue1, 0.06)
-        self.current_hue2 = lerp_hue_deg(self.current_hue2, self.target_hue2, 0.06)
-
-        if self.is_grayscale:
-            self.color1_rgb = kelvin_to_rgb(5500)
-            self.color2_rgb = kelvin_to_rgb(3800)
-        else:
-            sat = float(np.clip(0.82 * (self.engine.saturation_boost / 1.35), 0.45, 1.0))
-            self.color1_rgb = hsl_to_rgb(self.current_hue1, sat, 0.54)
-            self.color2_rgb = hsl_to_rgb(self.current_hue2, sat, 0.54)
-
-        active_eids = [eid for eid, enabled in self.engine.enabled_lights.items() if enabled]
-        if not active_eids:
-            return
-
-        # 2. Jeśli muzyka ZATRZYMANA -> Tryb "Flatline EKG" (impuls co 3.6 s jak na stronie)
-        if not self.is_playing:
-            self.active_flashes.clear()
-            ekg_cycle = now % 3.6
-            pulse_duration = 1.1
-            is_pulsing = ekg_cycle < pulse_duration
-            pulse_progress = (ekg_cycle / pulse_duration) if is_pulsing else -1.0
-
-            for eid in active_eids:
-                cfg = LIGHTS_CONFIG[eid]
-                px, py = cfg["pos"]
-                # Pozycja lampy wzdłuż pokoju (0.0 -> 1.0)
-                spatial_pos = float(np.clip(py * 0.7 + px * 0.3, 0.0, 1.0))
-
-                base_rgb = self.engine.blend_colors(self.color1_rgb, self.color2_rgb, spatial_pos)
-                base_bri = 28.0 * self.engine.master_brightness
-                trans = 0.35
-
-                if is_pulsing:
-                    dist = abs(spatial_pos - pulse_progress)
-                    if dist < 0.24:
-                        spike = math.exp(-((dist / 0.11) ** 2))
-                        base_rgb = self.engine.blend_colors(base_rgb, (255, 255, 255), spike * 0.65)
-                        base_bri += (145.0 * spike) * self.engine.master_brightness
-                        trans = 0.08
-
-                if cfg["is_ceiling"]:
-                    base_bri *= 0.55
-
-                self.engine.update_light(eid, rgb=base_rgb, bri=int(np.clip(base_bri, 6, 255)), transition=trans)
-            return
-
-        # 3. Muzyka GRA -> Sprawdzenie wygasłych błysków i wyzwalanie nowych w rytm BPM
-        expired = [eid for eid, exp_ts in self.active_flashes.items() if now >= exp_ts]
-        for eid in expired:
-            del self.active_flashes[eid]
-
-        if now >= self.next_strobe_ts:
-            self.last_beat_pulse_ts = now
-            # Kandydaci do błysku (z uwzględnieniem przełącznika ochrony sufitu)
-            candidates = [
-                eid for eid in active_eids
-                if self.ceiling_strobe_enabled or not LIGHTS_CONFIG[eid]["is_ceiling"]
-            ]
-            if not candidates:
-                candidates = active_eids
-
-            k_count = min(len(candidates), max(1, int(self.strobe_density)))
-            chosen = random.sample(candidates, k=k_count)
-
-            speed_mult = float(np.clip(120.0 / max(50.0, self.bpm), 0.45, 1.8))
-            # Na stronie błysk trwa 50-110ms, dla fizycznych żarówek dajemy 110-180ms by zdążyły osiągnąć pik
-            flash_duration = (random.uniform(0.11, 0.18)) * speed_mult
-
-            for eid in chosen:
-                self.active_flashes[eid] = now + flash_duration
-                # Kolor błysku: kontrastujący kolor z okładki wzmocniony czystą bielą (jak .strobe-flash)
-                flash_base = self.color2_rgb if random.random() > 0.35 else self.color1_rgb
-                flash_rgb = self.engine.blend_colors(flash_base, (255, 255, 255), self.strobe_flash_white_mix)
-
-                max_scale = 0.65 if LIGHTS_CONFIG[eid]["is_ceiling"] else 1.0
-                flash_bri = int(np.clip(255.0 * max_scale * self.engine.master_brightness, 40, 255))
-
-                self.engine.update_light(
-                    eid,
-                    rgb=flash_rgb,
-                    bri=flash_bri,
-                    transition=0.04,
-                    force=True,
-                )
-
-            # Dokładny wzór ze skawiskawi.pl: (60 / BPM) * (0.65 do 1.25 uderzenia)
-            beat_sec = 60.0 / float(np.clip(self.bpm, 50.0, 220.0))
-            next_interval = beat_sec * random.uniform(0.75, 1.35)
-            self.next_strobe_ts = now + next_interval
-
-        # 4. Warstwa tła (pływające Bloby z okładki dla lamp, które aktualnie nie są w trakcie błysku)
-        bpm_factor = float(np.clip(self.bpm / 120.0, 0.6, 2.0))
-        for idx, eid in enumerate(active_eids):
-            if eid in self.active_flashes:
-                continue
-
-            cfg = LIGHTS_CONFIG[eid]
-            px, py = cfg["pos"]
-            # Faza przestrzenna zależna od ułożenia lampy w pokoju
-            spatial_phase = (now * 0.85 * bpm_factor) + (px * 3.2) + (py * 2.5) + (idx * 0.5)
-            mix_ratio = (1.0 - math.cos(spatial_phase)) * 0.5
-
-            blob_rgb = self.engine.blend_colors(self.color1_rgb, self.color2_rgb, mix_ratio)
-
-            # Delikatne oddychanie jasności tła (odpowiednik fali dźwiękowej)
-            wave_breath = 0.24 + 0.14 * ((1.0 + math.sin(now * 1.6 * bpm_factor + idx)) * 0.5)
-            if cfg["is_ceiling"]:
-                wave_breath *= 0.55
-
-            target_bri = int(np.clip(255.0 * wave_breath * self.engine.master_brightness, 10, 210))
-            self.engine.update_light(eid, rgb=blob_rgb, bri=target_bri, transition=0.28)
-
-
-# =====================================================================
-# MOBILNA APLIKACJA WEBOWA (PWA HTML5 + GLASSMORPHISM UI DLA ANDROID/IOS)
-# =====================================================================
-MOBILE_PWA_HTML = """<!DOCTYPE html>
-<html lang="pl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#090D16">
-<title>Spatial Ambient Mobile v7.0</title>
-<style>
-  :root {
-    --bg: #090D16;
-    --card: rgba(17, 24, 39, 0.88);
-    --border: rgba(51, 65, 85, 0.55);
-    --accent: #38BDF8;
-    --text: #F8FAFC;
-    --sub: #94A3B8;
-  }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  body {
-    margin: 0; padding: 12px 12px 40px 12px;
-    background: radial-gradient(circle at top, #162036 0%, #090D16 55%);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    user-select: none;
-  }
-  .top-bar {
-    display: flex; justify-content: space-between; align-items: center;
-    background: var(--card); border: 1px solid var(--border);
-    padding: 12px 14px; border-radius: 16px; margin-bottom: 12px;
-    backdrop-filter: blur(12px);
-  }
-  .title { font-size: 16px; font-weight: 800; letter-spacing: 0.4px; }
-  .subtitle { font-size: 11px; color: var(--accent); margin-top: 2px; }
-  .badge {
-    background: #1E293B; padding: 6px 10px; border-radius: 10px;
-    font-family: monospace; font-size: 11px; color: #4ADE80; font-weight: 700;
-  }
-  .sec-title {
-    font-size: 11px; font-weight: 800; color: var(--sub);
-    text-transform: uppercase; letter-spacing: 0.8px;
-    margin: 14px 4px 8px 4px;
-  }
-  .modes-grid {
-    display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
-  }
-  .mode-btn {
-    background: var(--card); border: 1px solid var(--border);
-    color: var(--text); border-radius: 14px; padding: 13px 12px;
-    font-size: 13px; font-weight: 700; text-align: left;
-    display: flex; align-items: center; gap: 8px;
-    transition: transform 0.1s, background 0.2s, border-color 0.2s;
-  }
-  .mode-btn:active { transform: scale(0.97); }
-  .mode-btn.active-ZWYKLY { background: #0D9488; border-color: #2DD4BF; }
-  .mode-btn.active-GAMING { background: #2563EB; border-color: #60A5FA; }
-  .mode-btn.active-FILM { background: #D97706; border-color: #FBBF24; }
-  .mode-btn.active-NATI { background: #DB2777; border-color: #F472B6; }
-  .mode-btn.active-SPOTIFY { background: #16A34A; border-color: #4ADE80; grid-column: span 2; }
-  .mode-btn.active-MAX_WHITE { background: #EAB308; color: #0F172A; border-color: #FEF08A; }
-  .mode-btn.active-IDLE { background: #475569; border-color: #94A3B8; }
-
-  .spotify-banner {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 16px; padding: 12px 14px; margin-top: 10px;
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  }
-  .sp-dots { display: flex; gap: 6px; align-items: center; }
-  .sp-swatch { width: 22px; height: 22px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); }
-
-  .quick-row {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px;
-  }
-  .q-btn {
-    background: #1E293B; border: 1px solid var(--border); color: var(--text);
-    padding: 10px 4px; border-radius: 11px; font-size: 11px; font-weight: 700;
-    text-align: center;
-  }
-  .q-btn:active { transform: scale(0.95); }
-
-  .panel-card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 16px; padding: 12px 14px; margin-bottom: 10px;
-  }
-  .slider-row {
-    display: flex; align-items: center; gap: 10px; margin: 8px 0;
-  }
-  .slider-lbl { font-size: 12px; width: 120px; color: #CBD5E1; font-weight: 600; }
-  .slider-val { font-family: monospace; font-size: 12px; width: 48px; text-align: right; color: var(--accent); }
-  input[type=range] {
-    flex: 1; -webkit-appearance: none; appearance: none;
-    height: 8px; background: #1E293B; border-radius: 6px; outline: none;
-  }
-  input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 22px; height: 22px;
-    border-radius: 50%; background: var(--accent); cursor: pointer;
-    border: 2px solid #FFF;
-  }
-
-  .presets-bar {
-    display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
-  }
-  .preset-pill {
-    background: #1E293B; border: 1px solid var(--border); color: var(--text);
-    padding: 8px 14px; border-radius: 20px; font-size: 12px; font-weight: 700;
-    white-space: nowrap;
-  }
-  .save-row { display: flex; gap: 6px; margin-top: 8px; }
-  .save-input {
-    flex: 1; background: #0F172A; border: 1px solid var(--border);
-    color: #FFF; padding: 9px 12px; border-radius: 10px; font-size: 12px;
-  }
-
-  .lights-list { display: flex; flex-direction: column; gap: 10px; }
-  .light-card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 16px; padding: 12px;
-  }
-  .light-top {
-    display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
-  }
-  .light-info { display: flex; align-items: center; gap: 10px; }
-  .color-pick-wrap {
-    position: relative; width: 38px; height: 38px; border-radius: 10px;
-    border: 2px solid rgba(255,255,255,0.35); overflow: hidden;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .color-pick-wrap input[type=color] {
-    position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer;
-  }
-  .light-name { font-size: 14px; font-weight: 700; }
-  .light-sub { font-size: 11px; color: var(--sub); }
-  .light-btns { display: flex; gap: 6px; }
-  .mini-btn {
-    border: none; padding: 7px 11px; border-radius: 8px;
-    font-size: 11px; font-weight: 800; color: #FFF;
-  }
-  .palette-dots {
-    display: flex; justify-content: space-between; gap: 5px; margin-top: 8px;
-  }
-  .dot {
-    flex: 1; height: 22px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2);
-  }
-</style>
-</head>
-<body>
-
-<div class="top-bar">
-  <div>
-    <div class="title">✨ SPATIAL AMBIENT v7.0</div>
-    <div class="subtitle" id="statusText">Łączenie z MacBookiem...</div>
-  </div>
-  <div class="badge" id="pingBadge">WS ●</div>
-</div>
-
-<div class="sec-title">Sceny Automatyczne</div>
-<div class="modes-grid">
-  <button class="mode-btn" style="grid-column: span 2;" id="btn-SPOTIFY" onclick="sendAct({action:'set_mode', mode:'SPOTIFY'})">🎵 SPOTIFY BEAT (Okładka + Błyski BPM)</button>
-  <button class="mode-btn" id="btn-ZWYKLY" onclick="sendAct({action:'set_mode', mode:'ZWYKLY'})">☕ Zwykły</button>
-  <button class="mode-btn" id="btn-GAMING" onclick="sendAct({action:'set_mode', mode:'GAMING'})">🎮 Gaming</button>
-  <button class="mode-btn" id="btn-FILM" onclick="sendAct({action:'set_mode', mode:'FILM'})">🎬 Kino / Film</button>
-  <button class="mode-btn" id="btn-NATI" onclick="sendAct({action:'set_mode', mode:'NATI'})">🌸 Nati (3s)</button>
-  <button class="mode-btn" id="btn-MAX_WHITE" onclick="sendAct({action:'set_mode', mode:'MAX_WHITE'})">☀️ Max Biel 100%</button>
-  <button class="mode-btn" id="btn-IDLE" onclick="sendAct({action:'set_mode', mode:'IDLE'})">🎛️ Ręczny (HA)</button>
-</div>
-
-<div class="spotify-banner">
-  <div style="min-width:0; flex:1;">
-    <div style="font-size:10px; font-weight:800; color:#4ADE80; text-transform:uppercase;" id="spStatus">SPOTIFY SYNC</div>
-    <div style="font-size:13px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="spTrack">Pobieranie...</div>
-  </div>
-  <div class="sp-dots">
-    <div class="sp-swatch" id="spCol1"></div>
-    <div class="sp-swatch" id="spCol2"></div>
-  </div>
-</div>
-
-<div class="quick-row">
-  <button class="q-btn" onclick="sendAct({action:'set_mode', mode:'MAX_WHITE'})">💡 100% Biel</button>
-  <button class="q-btn" style="color:#F87171" onclick="sendAct({action:'sleep_all'})">🌑 Zgaś pokój</button>
-  <button class="q-btn" onclick="sendAct({action:'sync_all', state:true})">🔗 Sync 9/9</button>
-  <button class="q-btn" onclick="sendAct({action:'sync_all', state:false})">✋ Ręczny 9</button>
-</div>
-
-<div class="sec-title">Parametry Globalne & Spotify Strobe</div>
-<div class="panel-card">
-  <div class="slider-row">
-    <span class="slider-lbl">🔆 Skala Jasności</span>
-    <input type="range" id="gMaster" min="15" max="150" value="100" oninput="onGlobalSlide()">
-    <span class="slider-val" id="vMaster">100%</span>
-  </div>
-  <div class="slider-row">
-    <span class="slider-lbl">⚡ Błyski Spotify</span>
-    <input type="range" id="gStrobe" min="1" max="6" step="1" value="2" oninput="onGlobalSlide()">
-    <span class="slider-val" id="vStrobe">2 lampy</span>
-  </div>
-  <div class="slider-row">
-    <span class="slider-lbl">🌡️ Temp. Bieli</span>
-    <input type="range" id="gKelvin" min="2200" max="6500" step="50" value="4500" oninput="onGlobalSlide()">
-    <span class="slider-val" id="vKelvin">4500K</span>
-  </div>
-  <div class="slider-row">
-    <span class="slider-lbl">🎨 Nasycenie</span>
-    <input type="range" id="gSat" min="80" max="220" value="135" oninput="onGlobalSlide()">
-    <span class="slider-val" id="vSat">1.35x</span>
-  </div>
-</div>
-
-<div class="sec-title">Własne Sceny Pokoju</div>
-<div class="panel-card">
-  <div class="presets-bar" id="presetsBar"></div>
-  <div class="save-row">
-    <input type="text" class="save-input" id="presetName" placeholder="Nazwa nowej sceny...">
-    <button class="q-btn" style="padding:0 14px; background:#0D9488" onclick="savePreset()">💾 Zapisz</button>
-  </div>
-</div>
-
-<div class="sec-title">Wszystkie Światła (Zaznacz 🔗 SYNC dla błysków Spotify)</div>
-<div class="lights-list" id="lightsContainer"></div>
-
-<script>
-const QUICK_COLORS = [
-  {rgb:[255,190,125], k:2700},
-  {rgb:[255,245,235], k:4800},
-  {rgb:[255,95,190],  k:null},
-  {rgb:[95,0,210],    k:null},
-  {rgb:[0,235,255],   k:null},
-  {rgb:[255,140,0],   k:null},
-  {rgb:[0,230,118],   k:null},
-  {rgb:[255,25,65],   k:null}
-];
-
-let touchingSlider = false;
-let touchTimer = null;
-
-function markTouch() {
-  touchingSlider = true;
-  if (touchTimer) clearTimeout(touchTimer);
-  touchTimer = setTimeout(() => { touchingSlider = false; }, 1200);
-}
-
-function haptic() {
-  if (navigator.vibrate) navigator.vibrate(12);
-}
-
-async function sendAct(payload) {
-  haptic();
-  try {
-    await fetch('/api/action', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
-    });
-    fetchState();
-  } catch (e) {}
-}
-
-function onGlobalSlide() {
-  markTouch();
-  const m = document.getElementById('gMaster').value;
-  const st = document.getElementById('gStrobe').value;
-  const k = document.getElementById('gKelvin').value;
-  const s = document.getElementById('gSat').value;
-  document.getElementById('vMaster').innerText = m + '%';
-  document.getElementById('vStrobe').innerText = st + ' lamp';
-  document.getElementById('vKelvin').innerText = k + 'K';
-  document.getElementById('vSat').innerText = (s / 100).toFixed(2) + 'x';
-  fetch('/api/action', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      action: 'set_global',
-      master_brightness: m / 100.0,
-      strobe_density: parseInt(st),
-      white_temp_kelvin: parseInt(k),
-      saturation_boost: s / 100.0
-    })
-  });
-}
-
-function savePreset() {
-  const inp = document.getElementById('presetName');
-  const name = inp.value.trim() || 'Mobilna Scena';
-  inp.value = '';
-  sendAct({action: 'save_preset', name: name});
-}
-
-function buildLightsDOM(lights) {
-  const container = document.getElementById('lightsContainer');
-  container.innerHTML = '';
-  lights.forEach(l => {
-    const card = document.createElement('div');
-    card.className = 'light-card';
-    card.id = 'card-' + l.id;
-
-    let dotsHtml = '';
-    QUICK_COLORS.forEach(c => {
-      const hex = '#' + c.rgb.map(x => x.toString(16).padStart(2,'0')).join('');
-      const kArg = c.k ? c.k : 'null';
-      dotsHtml += `<div class="dot" style="background:${hex}" onclick="sendAct({action:'set_light', entity_id:'${l.id}', rgb:[${c.rgb}], kelvin:${kArg}})"></div>`;
-    });
-
-    card.innerHTML = `
-      <div class="light-top">
-        <div class="light-info">
-          <div class="color-pick-wrap" id="swatch-${l.id}" style="background:${l.hex}">
-            <span>${l.icon}</span>
-            <input type="color" value="${l.hex}" onchange="sendAct({action:'set_light', entity_id:'${l.id}', hex:this.value})">
-          </div>
-          <div>
-            <div class="light-name">${l.name}</div>
-            <div class="light-sub" id="sub-${l.id}">Jasność: ${l.bri_pct}%</div>
-          </div>
-        </div>
-        <div class="light-btns">
-          <button class="mini-btn" id="sync-${l.id}" onclick="sendAct({action:'toggle_sync', entity_id:'${l.id}'})">SYNC</button>
-          <button class="mini-btn" id="pwr-${l.id}" onclick="sendAct({action:'toggle_power', entity_id:'${l.id}'})">ON</button>
-        </div>
-      </div>
-      <div class="slider-row">
-        <span style="font-size:12px">🔆</span>
-        <input type="range" id="bri-${l.id}" min="1" max="255" value="${l.bri}"
-          oninput="markTouch(); fetch('/api/action',{method:'POST',body:JSON.stringify({action:'set_light',entity_id:'${l.id}',bri:parseInt(this.value)})})">
-        <span class="slider-val" id="bval-${l.id}">${l.bri_pct}%</span>
-      </div>
-      <div class="slider-row">
-        <span style="font-size:12px">🌡️</span>
-        <input type="range" id="ct-${l.id}" min="2000" max="6500" step="50" value="${l.kelvin}"
-          oninput="markTouch(); fetch('/api/action',{method:'POST',body:JSON.stringify({action:'set_light',entity_id:'${l.id}',kelvin:parseInt(this.value)})})">
-        <span class="slider-val" id="kval-${l.id}">${l.kelvin}K</span>
-      </div>
-      <div class="palette-dots">${dotsHtml}</div>
-    `;
-    container.appendChild(card);
-  });
-}
-
-let domBuilt = false;
-
-async function fetchState() {
-  try {
-    const res = await fetch('/api/state');
-    const data = await res.json();
-
-    document.getElementById('statusText').innerText = `Tryb: ${data.mode} • Aktywne: ${data.sync_count}/9`;
-    document.getElementById('pingBadge').innerText = `${data.ws_online ? 'WS⚡' : 'REST'} ${data.ping_ms.toFixed(0)}ms`;
-
-    ['SPOTIFY','ZWYKLY','GAMING','FILM','NATI','MAX_WHITE','IDLE'].forEach(m => {
-      const b = document.getElementById('btn-' + m);
-      if (b) b.className = 'mode-btn' + (data.mode === m ? ' active-' + m : '');
-    });
-
-    if (data.spotify) {
-      document.getElementById('spStatus').innerText = data.spotify.is_playing
-        ? `🎵 NOW PLAYING • ${Math.round(data.spotify.bpm)} BPM`
-        : `⏸️ PAUZA (TRYB EKG 3.6s)`;
-      document.getElementById('spTrack').innerText = `${data.spotify.title} — ${data.spotify.artist}`;
-      document.getElementById('spCol1').style.background = data.spotify.hex1;
-      document.getElementById('spCol2').style.background = data.spotify.hex2;
-    }
-
-    if (!touchingSlider) {
-      document.getElementById('gMaster').value = Math.round(data.master_brightness * 100);
-      document.getElementById('vMaster').innerText = Math.round(data.master_brightness * 100) + '%';
-      document.getElementById('gStrobe').value = data.strobe_density;
-      document.getElementById('vStrobe').innerText = data.strobe_density + ' lamp';
-      document.getElementById('gKelvin').value = data.white_temp_kelvin;
-      document.getElementById('vKelvin').innerText = data.white_temp_kelvin + 'K';
-      document.getElementById('gSat').value = Math.round(data.saturation_boost * 100);
-      document.getElementById('vSat').innerText = data.saturation_boost.toFixed(2) + 'x';
-    }
-
-    const pBar = document.getElementById('presetsBar');
-    pBar.innerHTML = '';
-    data.presets.forEach(pName => {
-      const btn = document.createElement('button');
-      btn.className = 'preset-pill';
-      btn.innerText = '✨ ' + pName;
-      btn.onclick = () => sendAct({action: 'load_preset', name: pName});
-      pBar.appendChild(btn);
-    });
-
-    if (!domBuilt) {
-      buildLightsDOM(data.lights);
-      domBuilt = true;
-    } else {
-      data.lights.forEach(l => {
-        const sw = document.getElementById('swatch-' + l.id);
-        if (sw) sw.style.background = l.is_on ? l.hex : '#1E293B';
-        const sub = document.getElementById('sub-' + l.id);
-        if (sub) sub.innerText = l.is_on ? `Aktywna • ${l.bri_pct}% • ${l.kelvin}K` : 'Wyłączona (Standby)';
-
-        const syncBtn = document.getElementById('sync-' + l.id);
-        if (syncBtn) {
-          syncBtn.innerText = l.in_sync ? '🔗 SYNC' : '✋ RĘCZNY';
-          syncBtn.style.background = l.in_sync ? '#0F766E' : '#475569';
-        }
-        const pwrBtn = document.getElementById('pwr-' + l.id);
-        if (pwrBtn) {
-          pwrBtn.innerText = l.is_on ? 'ON' : 'OFF';
-          pwrBtn.style.background = l.is_on ? '#2563EB' : '#334155';
-        }
-        if (!touchingSlider) {
-          const bSlider = document.getElementById('bri-' + l.id);
-          if (bSlider) bSlider.value = l.bri;
-          const bVal = document.getElementById('bval-' + l.id);
-          if (bVal) bVal.innerText = l.bri_pct + '%';
-          const cSlider = document.getElementById('ct-' + l.id);
-          if (cSlider) cSlider.value = l.kelvin;
-          const kVal = document.getElementById('kval-' + l.id);
-          if (kVal) kVal.innerText = l.kelvin + 'K';
-        }
-      });
-    }
-  } catch (e) {}
-}
-
-fetchState();
-setInterval(fetchState, 600);
-</script>
-</body>
-</html>
-"""
 
 
 # =====================================================================
@@ -862,7 +141,7 @@ class MobileRemoteServer:
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, format, *args):
-                pass
+                pass  # Wyłączenie spamu logów HTTP w terminalu
 
             def _send_cors(self):
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -897,6 +176,7 @@ class MobileRemoteServer:
                     self.wfile.write(body)
                     return
 
+                # Szybki Webhook GET dla skrótów iOS/Android i automatyzacji HA: /api/mode/NATI
                 if self.path.startswith("/api/mode/"):
                     target = self.path.split("/api/mode/")[-1].upper().strip()
                     parent.engine.execute_mobile_command({"action": "set_mode", "mode": target})
@@ -951,7 +231,7 @@ class MobileRemoteServer:
 
 
 # =====================================================================
-# NATYWNY KLIENT HOME ASSISTANT WEBSOCKET API (RFC 6455 + FRAGMENTACJA)
+# NATYWNY KLIENT HOME ASSISTANT WEBSOCKET API (RFC 6455)
 # =====================================================================
 class HAWebSocketClient:
     def __init__(self, ha_url: str, token: str, engine: "AmbientEngine"):
@@ -1064,37 +344,23 @@ class HAWebSocketClient:
             self.connected = False
             return False
 
-    def _recv_message(self) -> tuple[int, bytes]:
-        """Odbiera pełną wiadomość RFC 6455, łącząc pofragmentowane ramki (FIN=0)."""
-        full_payload = bytearray()
-        first_opcode = None
+    def _recv_frame(self) -> tuple[int, bytes]:
+        b1, b2 = self._read_exact(2)
+        opcode = b1 & 0x0F
+        is_masked = bool(b2 & 0x80)
+        length = b2 & 0x7F
 
-        while True:
-            b1, b2 = self._read_exact(2)
-            fin = bool(b1 & 0x80)
-            opcode = b1 & 0x0F
-            is_masked = bool(b2 & 0x80)
-            length = b2 & 0x7F
+        if length == 126:
+            (length,) = struct.unpack("!H", self._read_exact(2))
+        elif length == 127:
+            (length,) = struct.unpack("!Q", self._read_exact(8))
 
-            if length == 126:
-                (length,) = struct.unpack("!H", self._read_exact(2))
-            elif length == 127:
-                (length,) = struct.unpack("!Q", self._read_exact(8))
+        mask_key = self._read_exact(4) if is_masked else None
+        payload = self._read_exact(length)
+        if is_masked and mask_key:
+            payload = bytes(b ^ mask_key[i & 3] for i, b in enumerate(payload))
 
-            mask_key = self._read_exact(4) if is_masked else None
-            payload = self._read_exact(length)
-            if is_masked and mask_key:
-                payload = bytes(b ^ mask_key[i & 3] for i, b in enumerate(payload))
-
-            if opcode in (0x8, 0x9, 0xA):
-                return opcode, payload
-
-            if first_opcode is None:
-                first_opcode = opcode
-            full_payload.extend(payload)
-
-            if fin:
-                return first_opcode or 0x1, bytes(full_payload)
+        return opcode, payload
 
     def _connection_loop(self):
         while self.running:
@@ -1102,7 +368,7 @@ class HAWebSocketClient:
                 self._connect_socket()
 
                 while self.running:
-                    opcode, payload = self._recv_message()
+                    opcode, payload = self._recv_frame()
                     if opcode == 0x8:
                         break
                     if opcode == 0x9:
@@ -1232,7 +498,7 @@ class HAWebSocketClient:
 
 
 # =====================================================================
-# GŁÓWNY SILNIK OŚWIETLENIA (AMBIENT ENGINE v7.0)
+# GŁÓWNY SILNIK OŚWIETLENIA (AMBIENT ENGINE v6.0)
 # =====================================================================
 class AmbientEngine:
     def __init__(self, dev_mode=False):
@@ -1293,7 +559,6 @@ class AmbientEngine:
             "Content-Type": "application/json",
         })
         self.executor = ThreadPoolExecutor(max_workers=10)
-        self.spotify_sync = SpotifyBeatSync(self)
         self.ws_client = HAWebSocketClient(HA_URL, HA_TOKEN, self)
         self.mobile_server = MobileRemoteServer(self, port=MOBILE_PORT)
 
@@ -1326,18 +591,9 @@ class AmbientEngine:
             "fps": self.fps,
             "sync_count": sum(1 for v in self.enabled_lights.values() if v),
             "master_brightness": self.master_brightness,
-            "strobe_density": self.spotify_sync.strobe_density,
             "white_temp_kelvin": self.white_temp_kelvin,
             "saturation_boost": self.saturation_boost,
             "presets": list(self.user_presets.keys()),
-            "spotify": {
-                "is_playing": self.spotify_sync.is_playing,
-                "title": self.spotify_sync.title,
-                "artist": self.spotify_sync.artist,
-                "bpm": self.spotify_sync.bpm,
-                "hex1": rgb_to_hex(self.spotify_sync.color1_rgb),
-                "hex2": rgb_to_hex(self.spotify_sync.color2_rgb),
-            },
             "lights": lights_payload,
         }
 
@@ -1357,9 +613,7 @@ class AmbientEngine:
                 self.set_manual_passthrough()
                 if self.ui_mode_callback:
                     self.ui_mode_callback("IDLE", "📱 Pilot Mobilny: Przełączono na 🎛️ Tryb Ręczny")
-            elif m in ("ZWYKLY", "GAMING", "FILM", "NATI", "SPOTIFY"):
-                if m == "SPOTIFY":
-                    self.spotify_sync.trigger_immediate_poll()
+            elif m in ("ZWYKLY", "GAMING", "FILM", "NATI"):
                 self.trigger_spatial_wave(m)
                 if self.ui_mode_callback:
                     self.ui_mode_callback(m, f"📱 Pilot Mobilny: Uruchomiono scenę {m}")
@@ -1378,8 +632,6 @@ class AmbientEngine:
         elif action == "set_global":
             if "master_brightness" in payload:
                 self.master_brightness = float(np.clip(payload["master_brightness"], 0.15, 1.50))
-            if "strobe_density" in payload:
-                self.spotify_sync.strobe_density = int(np.clip(payload["strobe_density"], 1, 9))
             if "white_temp_kelvin" in payload:
                 self.white_temp_kelvin = int(np.clip(payload["white_temp_kelvin"], 2200, 6500))
             if "saturation_boost" in payload:
@@ -1497,26 +749,13 @@ class AmbientEngine:
                 self.manual_set_light(eid, rgb=rgb, kelvin=kelvin, bri=bri, transition=0.8)
 
     # -----------------------------------------------------------------
-    # SYNCHRONIZACJA STANU Z HOME ASSISTANTEM + AUTO-OVERRIDE + MEDIA_PLAYER
+    # SYNCHRONIZACJA STANU Z HOME ASSISTANTEM + AUTO-OVERRIDE
     # -----------------------------------------------------------------
     def _mark_script_cmd(self, entity_id: str):
         self._last_script_cmd_ts[entity_id] = time.perf_counter()
 
     def ingest_ha_state(self, state_obj: dict, is_initial: bool = False):
-        entity_id = state_obj.get("entity_id") or ""
-
-        # Natychmiastowe wykrywanie pauzy/zmiany utworu z encji Spotify w Home Assistant
-        if entity_id.startswith("media_player.spotify"):
-            state_str = state_obj.get("state")
-            was_playing = self.spotify_sync.is_playing
-            if state_str in ("paused", "idle", "off", "standby"):
-                self.spotify_sync.is_playing = False
-            elif state_str == "playing":
-                self.spotify_sync.is_playing = True
-                if not is_initial and not was_playing:
-                    self.spotify_sync.trigger_immediate_poll()
-            return
-
+        entity_id = state_obj.get("entity_id")
         if entity_id not in LIGHTS_CONFIG:
             return
 
@@ -1541,22 +780,19 @@ class AmbientEngine:
         now_perf = time.perf_counter()
         time_since_our_cmd = now_perf - self._last_script_cmd_ts.get(entity_id, 0.0)
 
-        # W trybie SPOTIFY (przez dynamiczne skoki jasności Strobe) okno ochronne wynosi 3.0s
-        override_grace = 3.0 if self.mode == "SPOTIFY" else 1.35
-
         if (
             not is_initial
             and self.auto_override_from_ha
             and self.mode != "IDLE"
             and not self.wave_in_progress
             and self.enabled_lights.get(entity_id, True)
-            and time_since_our_cmd > override_grace
+            and time_since_our_cmd > 1.35
         ):
             prev_sent = self.last_sent_state.get(entity_id)
             external_change = False
             if state_str == "off":
                 external_change = True
-            elif prev_sent is not None and self.mode != "SPOTIFY":
+            elif prev_sent is not None:
                 sent_rgb, sent_bri, _ = prev_sent
                 if abs(bri - sent_bri) > 22:
                     external_change = True
@@ -1824,14 +1060,9 @@ class AmbientEngine:
             self.mode = target_mode
 
         def wave_worker():
-            if target_mode == "SPOTIFY":
-                col1 = self.spotify_sync.color1_rgb
-                col2 = self.spotify_sync.color2_rgb
-                col3 = self.blend_colors(col1, col2, 0.5)
-            else:
-                _theme_name, col1, col2, col3 = random.choice(WAVE_THEMES)
-                if random.random() > 0.5:
-                    col1, col2 = col2, col1
+            theme_name, col1, col2, col3 = random.choice(WAVE_THEMES)
+            if random.random() > 0.5:
+                col1, col2 = col2, col1
 
             waves = [
                 (col1, 225, 0.40, 0.11),
@@ -1997,17 +1228,6 @@ class AmbientEngine:
                     self.frame_time_ms = (time.perf_counter() - t_start) * 1000.0
                     self.fps = 2.5
                     time.sleep(0.40)
-                    continue
-
-                # Obsługa nowego trybu SPOTIFY bez obciążania CPU zrzutami ekranu mss!
-                if self.mode == "SPOTIFY":
-                    self.spotify_sync.step_frame(t_start)
-                    elapsed = time.perf_counter() - t_start
-                    self.frame_time_ms = elapsed * 1000.0
-                    sleep_target = 0.045  # ~22 FPS dla precyzyjnego wyzwalania stroboskopu BPM
-                    self.fps = 1.0 / max(elapsed, sleep_target)
-                    if elapsed < sleep_target:
-                        time.sleep(sleep_target - elapsed)
                     continue
 
                 raw_shot = sct.grab(monitor)
@@ -2290,20 +1510,15 @@ class LightControlCard(ctk.CTkFrame):
         bri = state.get("bri", 0)
         kelvin = state.get("kelvin", 4000)
         in_sync = self.engine.enabled_lights.get(self.entity_id, True)
-        is_flashing = (self.engine.mode == "SPOTIFY" and self.entity_id in self.engine.spotify_sync.active_flashes)
 
-        if is_flashing:
-            self.configure(border_color="#4ADE80", border_width=2)
-        else:
-            self.configure(border_color="#38BDF8" if is_selected else "#1E293B", border_width=2 if is_selected else 1)
+        self.configure(border_color="#38BDF8" if is_selected else "#1E293B", border_width=2 if is_selected else 1)
 
         if is_on:
             hex_col = rgb_to_hex(rgb)
             bri_pct = int((bri / 255.0) * 100)
             self.swatch_btn.configure(fg_color=hex_col)
             self.power_btn.configure(text="ON", fg_color="#2563EB", hover_color="#1D4ED8")
-            flash_tag = " ⚡FLASH" if is_flashing else ""
-            self.sub_lbl.configure(text=f"Aktywna • {bri_pct}% • RGB {rgb}{flash_tag}", text_color="#4ADE80" if is_flashing else "#94A3B8")
+            self.sub_lbl.configure(text=f"Aktywna • {bri_pct}% • RGB {rgb}", text_color="#94A3B8")
             if not self._dragging_bri:
                 self.bri_slider.set(bri)
                 self.bri_val_lbl.configure(text=f"{bri_pct}%")
@@ -2325,7 +1540,7 @@ class LightControlCard(ctk.CTkFrame):
 
 
 # =====================================================================
-# GŁÓWNE OKNO APLIKACJI: SPATIAL AMBIENT STUDIO v7.0 (DESKTOP + MOBILE)
+# GŁÓWNE OKNO APLIKACJI: SPATIAL AMBIENT STUDIO v6.0 (DESKTOP + MOBILE)
 # =====================================================================
 class AmbientStudioApp(ctk.CTk):
     def __init__(self, engine: AmbientEngine):
@@ -2339,9 +1554,9 @@ class AmbientStudioApp(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        self.title("✨ Spatial Ambient Studio v7.0 — Spotify Beat & Mobile PWA Center")
-        self.geometry("1240x860")
-        self.minsize(1120, 780)
+        self.title("✨ Spatial Ambient Studio v6.0 — Desktop & Mobile PWA Control Center")
+        self.geometry("1220x820")
+        self.minsize(1100, 750)
         self.configure(fg_color="#090D16")
         self.protocol("WM_DELETE_WINDOW", self.on_exit)
 
@@ -2364,7 +1579,7 @@ class AmbientStudioApp(ctk.CTk):
             self.refresh_user_presets_ui()
 
     # -----------------------------------------------------------------
-    # SKRÓTY KLAWISZOWE (1-6, 0)
+    # SKRÓTY KLAWISZOWE
     # -----------------------------------------------------------------
     def _setup_keybindings(self):
         self.bind("1", lambda e: self._hotkey_action("ZWYKLY") if not isinstance(e.widget, ctk.CTkEntry) else None)
@@ -2372,10 +1587,9 @@ class AmbientStudioApp(ctk.CTk):
         self.bind("3", lambda e: self._hotkey_action("FILM") if not isinstance(e.widget, ctk.CTkEntry) else None)
         self.bind("4", lambda e: self._hotkey_action("NATI") if not isinstance(e.widget, ctk.CTkEntry) else None)
         self.bind("5", lambda e: self._hotkey_action("MAX_WHITE") if not isinstance(e.widget, ctk.CTkEntry) else None)
-        self.bind("6", lambda e: self._hotkey_action("SPOTIFY") if not isinstance(e.widget, ctk.CTkEntry) else None)
         self.bind("0", lambda e: self._hotkey_action("IDLE") if not isinstance(e.widget, ctk.CTkEntry) else None)
 
-        if False and HAS_PYNPUT:
+        if HAS_PYNPUT:
             try:
                 hotkeys = pynput_keyboard.GlobalHotKeys({
                     "<cmd>+<shift>+1": lambda: self.after(0, lambda: self.switch_mode("ZWYKLY")),
@@ -2383,7 +1597,6 @@ class AmbientStudioApp(ctk.CTk):
                     "<cmd>+<shift>+3": lambda: self.after(0, lambda: self.switch_mode("FILM")),
                     "<cmd>+<shift>+4": lambda: self.after(0, lambda: self.switch_mode("NATI")),
                     "<cmd>+<shift>+5": lambda: self.after(0, self.activate_max_white),
-                    "<cmd>+<shift>+6": lambda: self.after(0, lambda: self.switch_mode("SPOTIFY")),
                     "<cmd>+<shift>+0": lambda: self.after(0, lambda: self.switch_mode("IDLE")),
                 })
                 hotkeys.daemon = True
@@ -2397,7 +1610,7 @@ class AmbientStudioApp(ctk.CTk):
         self.switch_mode(mode_key)
 
     # -----------------------------------------------------------------
-    # GÓRNY PASEK NAWIGACJI + TELEMETRIA SPOTIFY
+    # GÓRNY PASEK NAWIGACJI + PRZYCISK PILOTA MOBILNEGO
     # -----------------------------------------------------------------
     def _build_top_bar(self):
         self.top_bar = ctk.CTkFrame(self, fg_color="#0F172A", corner_radius=0, height=64)
@@ -2408,14 +1621,14 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkLabel(
             title_frame,
-            text="✨ SPATIAL AMBIENT STUDIO v7.0",
+            text="✨ SPATIAL AMBIENT STUDIO v6.0",
             font=ctk.CTkFont(size=19, weight="bold"),
             text_color="#F8FAFC",
         ).pack(anchor="w")
 
         self.status_label = ctk.CTkLabel(
             title_frame,
-            text=f"📱 Pilot Mobilny aktywny: {self.engine.mobile_server.url}  |  Klawisz [6] ➔ Spotify Beat",
+            text=f"📱 Pilot Mobilny aktywny pod adresem: {self.engine.mobile_server.url}",
             font=ctk.CTkFont(size=12),
             text_color="#38BDF8",
         )
@@ -2423,19 +1636,6 @@ class AmbientStudioApp(ctk.CTk):
 
         telemetry_box = ctk.CTkFrame(self.top_bar, fg_color="#1E293B", corner_radius=10)
         telemetry_box.pack(side="right", padx=20, pady=12)
-
-        self.sp_swatch1 = ctk.CTkFrame(telemetry_box, width=18, height=18, corner_radius=5, fg_color="#1ED760")
-        self.sp_swatch1.pack(side="left", padx=(10, 3), pady=6)
-        self.sp_swatch2 = ctk.CTkFrame(telemetry_box, width=18, height=18, corner_radius=5, fg_color="#6366F1")
-        self.sp_swatch2.pack(side="left", padx=(0, 8), pady=6)
-
-        self.sp_top_lbl = ctk.CTkLabel(
-            telemetry_box,
-            text="🎵 Spotify: Sprawdzanie...",
-            font=ctk.CTkFont(family="Menlo", size=11, weight="bold"),
-            text_color="#4ADE80",
-        )
-        self.sp_top_lbl.pack(side="left", padx=(0, 10), pady=6)
 
         self.mobile_btn = ctk.CTkButton(
             telemetry_box,
@@ -2447,7 +1647,7 @@ class AmbientStudioApp(ctk.CTk):
             font=ctk.CTkFont(family="Menlo", size=11, weight="bold"),
             command=self.open_mobile_info_modal,
         )
-        self.mobile_btn.pack(side="left", padx=(4, 8), pady=6)
+        self.mobile_btn.pack(side="left", padx=(8, 8), pady=6)
 
         self.ws_badge = ctk.CTkLabel(
             telemetry_box,
@@ -2468,7 +1668,7 @@ class AmbientStudioApp(ctk.CTk):
     def open_mobile_info_modal(self):
         modal = ctk.CTkToplevel(self)
         modal.title("📱 Pilot Mobilny (Android / iOS / Home Assistant)")
-        modal.geometry("540x380")
+        modal.geometry("540x360")
         modal.configure(fg_color="#0F172A")
         modal.attributes("-topmost", True)
 
@@ -2501,7 +1701,6 @@ class AmbientStudioApp(ctk.CTk):
             "💡 Wskazówka dla Home Assistant (Bubble Card / Dashboard):\n"
             f"Możesz dodać kartę 'Strona internetowa (Webpage)' z adresem {url}\n"
             "lub wywoływać sceny przez Webhooki GET:\n"
-            f"• {url}/api/mode/SPOTIFY\n"
             f"• {url}/api/mode/NATI\n"
             f"• {url}/api/mode/GAMING\n"
             f"• {url}/api/mode/MAX_WHITE\n"
@@ -2537,26 +1736,25 @@ class AmbientStudioApp(ctk.CTk):
         self._build_right_inspector()
 
     def _build_left_sidebar(self):
-        sidebar = ctk.CTkFrame(self.workspace, width=265, corner_radius=14, fg_color="#0F172A")
+        sidebar = ctk.CTkFrame(self.workspace, width=255, corner_radius=14, fg_color="#0F172A")
         sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 12))
         sidebar.grid_propagate(False)
 
         ctk.CTkLabel(
             sidebar,
-            text="SCENY AUTOMATYCZNE (KLAWISZE 1-6, 0)",
+            text="SCENY AUTOMATYCZNE (KLAWISZE 1-5, 0)",
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="#64748B",
-        ).pack(anchor="w", padx=14, pady=(10, 3))
+        ).pack(anchor="w", padx=14, pady=(12, 4))
 
         self.mode_buttons = {}
         modes = [
-            ("SPOTIFY",   "🎵  [6] SPOTIFY (Beat & Okładka)", "#16A34A"),
-            ("ZWYKLY",    "☕  [1] ZWYKŁY (Ciepły Ambient)",  "#0D9488"),
-            ("GAMING",    "🎮  [2] GAMING (Ultra Szybki)",    "#2563EB"),
-            ("FILM",      "🎬  [3] KINO / FILM (Płynny)",     "#D97706"),
-            ("NATI",      "🌸  [4] NATI (Róż ⇄ Fiolet 3s)",   "#DB2777"),
-            ("MAX_WHITE", "☀️  [5] PEŁNA BIEL (100% CCT)",    "#EAB308"),
-            ("IDLE",      "🎛️  [0] TRYB RĘCZNY (HA Live)",    "#475569"),
+            ("ZWYKLY",    "☕  [1] ZWYKŁY (Ciepły Ambient)", "#0D9488"),
+            ("GAMING",    "🎮  [2] GAMING (Ultra Szybki)",   "#2563EB"),
+            ("FILM",      "🎬  [3] KINO / FILM (Płynny)",    "#D97706"),
+            ("NATI",      "🌸  [4] NATI (Róż ⇄ Fiolet 3s)",  "#DB2777"),
+            ("MAX_WHITE", "☀️  [5] PEŁNA BIEL (100% CCT)",   "#EAB308"),
+            ("IDLE",      "🎛️  [0] TRYB RĘCZNY (HA Live)",   "#475569"),
         ]
 
         for key, label, active_col in modes:
@@ -2564,7 +1762,7 @@ class AmbientStudioApp(ctk.CTk):
                 sidebar,
                 text=label,
                 anchor="w",
-                height=33,
+                height=35,
                 corner_radius=8,
                 font=ctk.CTkFont(size=12, weight="bold"),
                 fg_color="#475569" if key == "IDLE" else "#1E293B",
@@ -2579,7 +1777,7 @@ class AmbientStudioApp(ctk.CTk):
             text="CAŁY POKÓJ & INTELIGENCJA",
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="#64748B",
-        ).pack(anchor="w", padx=14, pady=(8, 3))
+        ).pack(anchor="w", padx=14, pady=(12, 4))
 
         quick_grid = ctk.CTkFrame(sidebar, fg_color="transparent")
         quick_grid.pack(fill="x", padx=12)
@@ -2588,7 +1786,7 @@ class AmbientStudioApp(ctk.CTk):
         ctk.CTkButton(
             quick_grid,
             text="💡 Biel 100%",
-            height=28,
+            height=30,
             fg_color="#1E293B",
             hover_color="#0284C7",
             font=ctk.CTkFont(size=11, weight="bold"),
@@ -2598,7 +1796,7 @@ class AmbientStudioApp(ctk.CTk):
         ctk.CTkButton(
             quick_grid,
             text="🌑 Zgaś pokój",
-            height=28,
+            height=30,
             fg_color="#1E293B",
             hover_color="#DC2626",
             font=ctk.CTkFont(size=11, weight="bold"),
@@ -2608,7 +1806,7 @@ class AmbientStudioApp(ctk.CTk):
         ctk.CTkButton(
             quick_grid,
             text="🔗 Sync 9/9",
-            height=26,
+            height=28,
             fg_color="#1E293B",
             hover_color="#0F766E",
             font=ctk.CTkFont(size=11),
@@ -2618,7 +1816,7 @@ class AmbientStudioApp(ctk.CTk):
         ctk.CTkButton(
             quick_grid,
             text="✋ Ręczny 9/9",
-            height=26,
+            height=28,
             fg_color="#1E293B",
             hover_color="#475569",
             font=ctk.CTkFont(size=11),
@@ -2626,7 +1824,7 @@ class AmbientStudioApp(ctk.CTk):
         ).grid(row=1, column=1, padx=3, pady=2, sticky="ew")
 
         smart_box = ctk.CTkFrame(sidebar, fg_color="#111827", corner_radius=10)
-        smart_box.pack(fill="x", padx=14, pady=(6, 4))
+        smart_box.pack(fill="x", padx=14, pady=(8, 4))
 
         self.sw_override = ctk.CTkSwitch(
             smart_box,
@@ -2635,7 +1833,7 @@ class AmbientStudioApp(ctk.CTk):
             command=self.on_smart_switches,
         )
         self.sw_override.select()
-        self.sw_override.pack(anchor="w", padx=10, pady=(6, 2))
+        self.sw_override.pack(anchor="w", padx=10, pady=(8, 4))
 
         self.sw_circadian = ctk.CTkSwitch(
             smart_box,
@@ -2644,46 +1842,28 @@ class AmbientStudioApp(ctk.CTk):
             command=self.on_smart_switches,
         )
         self.sw_circadian.select()
-        self.sw_circadian.pack(anchor="w", padx=10, pady=2)
-
-        self.sw_ceiling_strobe = ctk.CTkSwitch(
-            smart_box,
-            text="⚡ Sufit błyska w Spotify",
-            font=ctk.CTkFont(size=11),
-            command=self.on_smart_switches,
-        )
-        self.sw_ceiling_strobe.deselect()
-        self.sw_ceiling_strobe.pack(anchor="w", padx=10, pady=(2, 6))
+        self.sw_circadian.pack(anchor="w", padx=10, pady=(2, 8))
 
         sliders_box = ctk.CTkFrame(sidebar, fg_color="#111827", corner_radius=10)
         sliders_box.pack(fill="x", padx=14, pady=4)
 
         self.lbl_master = ctk.CTkLabel(sliders_box, text="Skala Jasności: 100%", font=ctk.CTkFont(size=11))
         self.lbl_master.pack(anchor="w", padx=10, pady=(6, 0))
-        self.s_master = ctk.CTkSlider(sliders_box, from_=0.15, to=1.50, height=13, command=self.on_global_sliders)
+        self.s_master = ctk.CTkSlider(sliders_box, from_=0.15, to=1.50, height=14, command=self.on_global_sliders)
         self.s_master.set(self.engine.master_brightness)
-        self.s_master.pack(fill="x", padx=10, pady=(1, 3))
-
-        self.lbl_strobe = ctk.CTkLabel(sliders_box, text="Błyski Spotify naraz: 2 lampy", font=ctk.CTkFont(size=11, weight="bold"), text_color="#4ADE80")
-        self.lbl_strobe.pack(anchor="w", padx=10)
-        self.s_strobe = ctk.CTkSlider(
-            sliders_box, from_=1, to=6, number_of_steps=5, height=13,
-            button_color="#4ADE80", progress_color="#16A34A", command=self.on_global_sliders
-        )
-        self.s_strobe.set(self.engine.spotify_sync.strobe_density)
-        self.s_strobe.pack(fill="x", padx=10, pady=(1, 3))
+        self.s_master.pack(fill="x", padx=10, pady=(2, 4))
 
         self.lbl_kelvin = ctk.CTkLabel(sliders_box, text="Temp. Bieli: 4500K", font=ctk.CTkFont(size=11))
         self.lbl_kelvin.pack(anchor="w", padx=10)
-        self.s_kelvin = ctk.CTkSlider(sliders_box, from_=2200, to=6500, height=13, command=self.on_global_sliders)
+        self.s_kelvin = ctk.CTkSlider(sliders_box, from_=2200, to=6500, height=14, command=self.on_global_sliders)
         self.s_kelvin.set(self.engine.white_temp_kelvin)
-        self.s_kelvin.pack(fill="x", padx=10, pady=(1, 3))
+        self.s_kelvin.pack(fill="x", padx=10, pady=(2, 4))
 
-        self.lbl_sat = ctk.CTkLabel(sliders_box, text="Nasycenie Kolorów: 1.35x", font=ctk.CTkFont(size=11))
+        self.lbl_sat = ctk.CTkLabel(sliders_box, text="Nasycenie Ekranu: 1.35x", font=ctk.CTkFont(size=11))
         self.lbl_sat.pack(anchor="w", padx=10)
-        self.s_sat = ctk.CTkSlider(sliders_box, from_=0.8, to=2.2, height=13, command=self.on_global_sliders)
+        self.s_sat = ctk.CTkSlider(sliders_box, from_=0.8, to=2.2, height=14, command=self.on_global_sliders)
         self.s_sat.set(self.engine.saturation_boost)
-        self.s_sat.pack(fill="x", padx=10, pady=(1, 6))
+        self.s_sat.pack(fill="x", padx=10, pady=(2, 8))
 
     # -----------------------------------------------------------------
     # ŚRODKOWY PANEL: KARTY 3x3 + MAPA 2D
@@ -2697,14 +1877,14 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkLabel(
             header_bar,
-            text="WSZYSTKIE STREFY ŚWIATŁA (KLIKNIJ 🔗 SYNC ABY WYBRAĆ LAMPY DO BŁYSKÓW)",
-            font=ctk.CTkFont(size=11, weight="bold"),
+            text="WSZYSTKIE STREFY ŚWIATŁA (9 ENCJI HA)",
+            font=ctk.CTkFont(size=12, weight="bold"),
             text_color="#94A3B8",
         ).pack(side="left")
 
         self.view_switcher = ctk.CTkSegmentedButton(
             header_bar,
-            values=["🎛️ Mikser Kart (3x3)", "Mapa Pokoju 2D (Drag & Drop)"],
+            values=["🎛️ Mikser Kart (3x3)", "🗺️ Mapa Pokoju 2D (Drag & Drop)"],
             command=self.switch_center_view,
             font=ctk.CTkFont(size=12, weight="bold"),
         )
@@ -3058,15 +2238,12 @@ class AmbientStudioApp(ctk.CTk):
             rgb = state.get("rgb", (0, 0, 0))
             bri = state.get("bri", 0)
             hex_col = rgb_to_hex(rgb) if is_on else "#1E293B"
-            is_flashing = (self.engine.mode == "SPOTIFY" and eid in self.engine.spotify_sync.active_flashes)
 
             if is_on:
-                glow_r = int(24 + (bri / 255.0) * (36 if is_flashing else 28))
+                glow_r = int(24 + (bri / 255.0) * 28)
                 c.create_oval(
                     x - glow_r, y - glow_r, x + glow_r, y + glow_r,
-                    outline="#FFFFFF" if is_flashing else hex_col,
-                    width=3 if is_flashing else 2,
-                    fill="#111827"
+                    outline=hex_col, width=2, fill="#111827"
                 )
 
             is_sel = (eid == self.selected_entity)
@@ -3074,8 +2251,8 @@ class AmbientStudioApp(ctk.CTk):
             c.create_oval(
                 x - node_r, y - node_r, x + node_r, y + node_r,
                 fill=hex_col,
-                outline="#4ADE80" if is_flashing else ("#FFFFFF" if is_sel else "#475569"),
-                width=3 if (is_sel or is_flashing) else 1,
+                outline="#FFFFFF" if is_sel else "#475569",
+                width=3 if is_sel else 1,
             )
             bri_pct = int((bri / 255.0) * 100) if is_on else 0
             c.create_text(
@@ -3144,13 +2321,10 @@ class AmbientStudioApp(ctk.CTk):
             )
             return
 
-        if mode_key == "SPOTIFY":
-            self.engine.spotify_sync.trigger_immediate_poll()
-
         self._highlight_mode_btn(mode_key)
         self.status_label.configure(
             text=f"🌊 Płynna fala przestrzenna ➔ Uruchamianie trybu: {mode_key}...",
-            text_color="#4ADE80" if mode_key == "SPOTIFY" else "#38BDF8",
+            text_color="#38BDF8",
         )
         self.engine.trigger_spatial_wave(mode_key)
 
@@ -3178,18 +2352,15 @@ class AmbientStudioApp(ctk.CTk):
     def on_smart_switches(self):
         self.engine.auto_override_from_ha = bool(self.sw_override.get())
         self.engine.circadian_enabled = bool(self.sw_circadian.get())
-        self.engine.spotify_sync.ceiling_strobe_enabled = bool(self.sw_ceiling_strobe.get())
 
     def on_global_sliders(self, _=None):
         self.engine.master_brightness = float(self.s_master.get())
-        self.engine.spotify_sync.strobe_density = int(round(self.s_strobe.get()))
         self.engine.white_temp_kelvin = int(self.s_kelvin.get())
         self.engine.saturation_boost = float(self.s_sat.get())
 
         self.lbl_master.configure(text=f"Skala Jasności: {int(self.engine.master_brightness * 100)}%")
-        self.lbl_strobe.configure(text=f"Błyski Spotify naraz: {self.engine.spotify_sync.strobe_density} lampy")
         self.lbl_kelvin.configure(text=f"Temp. Bieli: {self.engine.white_temp_kelvin}K")
-        self.lbl_sat.configure(text=f"Nasycenie Kolorów: {self.engine.saturation_boost:.2f}x")
+        self.lbl_sat.configure(text=f"Nasycenie Ekranu: {self.engine.saturation_boost:.2f}x")
         if self.engine.mode == "MAX_WHITE":
             self.engine.set_max_white_mode()
 
@@ -3206,21 +2377,10 @@ class AmbientStudioApp(ctk.CTk):
             self.status_label.configure(text=self.engine.last_override_notice, text_color="#FACC15")
             self.engine.last_override_notice = ""
 
-        # Aktualizacja paska Spotify w górnym panelu
-        sp = self.engine.spotify_sync
-        self.sp_swatch1.configure(fg_color=rgb_to_hex(sp.color1_rgb))
-        self.sp_swatch2.configure(fg_color=rgb_to_hex(sp.color2_rgb))
-        short_title = (sp.title[:22] + "…") if len(sp.title) > 23 else sp.title
-        if sp.is_playing:
-            self.sp_top_lbl.configure(text=f"🎵 {short_title} ({int(sp.bpm)} BPM)", text_color="#4ADE80")
-        else:
-            self.sp_top_lbl.configure(text=f"⏸️ {short_title} (EKG)", text_color="#94A3B8")
-
         # Synchronizacja suwaków globalnych, jeśli zmieniono je na telefonie
         self.lbl_master.configure(text=f"Skala Jasności: {int(self.engine.master_brightness * 100)}%")
-        self.lbl_strobe.configure(text=f"Błyski Spotify naraz: {sp.strobe_density} lampy")
         self.lbl_kelvin.configure(text=f"Temp. Bieli: {self.engine.white_temp_kelvin}K")
-        self.lbl_sat.configure(text=f"Nasycenie Kolorów: {self.engine.saturation_boost:.2f}x")
+        self.lbl_sat.configure(text=f"Nasycenie Ekranu: {self.engine.saturation_boost:.2f}x")
 
         active_cnt = sum(1 for v in self.engine.enabled_lights.values() if v)
         self.metrics_lbl.configure(
@@ -3230,7 +2390,7 @@ class AmbientStudioApp(ctk.CTk):
             text=(
                 f"🖥️ Auto-Crop: {self.engine.crop_info}  |  "
                 f"Luma L: {self.engine.luma_left:.2f}  P: {self.engine.luma_right:.2f}  |  "
-                f"🎵 Spotify: {sp.title} — {sp.artist}"
+                f"📱 Pilot: {self.engine.mobile_server.url}"
             )
         )
 
@@ -3266,5 +2426,3 @@ if __name__ == "__main__":
 
     app = AmbientStudioApp(engine)
     app.mainloop()
-
-    

@@ -24,9 +24,11 @@ async function getAccessToken(env) {
     if (missing.length > 0) {
         throw new Error(`Brak zmiennych w Cloudflare: ${missing.join(', ')}`);
     }
-    
-    const basic = btoa(`${clientId.trim()}:${clientSecret.trim()}`);
-    
+        
+    const basic = Buffer.from(
+    `${clientId.trim()}:${clientSecret.trim()}`
+    ).toString('base64');
+        
     const response = await fetch(TOKEN_ENDPOINT, {
         method: 'POST',
         headers: {
@@ -113,4 +115,4 @@ export async function onRequest(context) {
             error: error.message
         }), { status: 500, headers: CORS_HEADERS });
     }
-}
+}ś
