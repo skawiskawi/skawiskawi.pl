@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import io
 import sys
@@ -2374,7 +2375,7 @@ class AmbientStudioApp(ctk.CTk):
         self.bind("6", lambda e: self._hotkey_action("SPOTIFY") if not isinstance(e.widget, ctk.CTkEntry) else None)
         self.bind("0", lambda e: self._hotkey_action("IDLE") if not isinstance(e.widget, ctk.CTkEntry) else None)
 
-        if HAS_PYNPUT:
+        if False and HAS_PYNPUT:
             try:
                 hotkeys = pynput_keyboard.GlobalHotKeys({
                     "<cmd>+<shift>+1": lambda: self.after(0, lambda: self.switch_mode("ZWYKLY")),
@@ -2703,4 +2704,567 @@ class AmbientStudioApp(ctk.CTk):
 
         self.view_switcher = ctk.CTkSegmentedButton(
             header_bar,
-            values
+            values=["🎛️ Mikser Kart (3x3)", "Mapa Pokoju 2D (Drag & Drop)"],
+            command=self.switch_center_view,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self.view_switcher.set("🎛️ Mikser Kart (3x3)")
+        self.view_switcher.pack(side="right")
+
+        self.center_container = ctk.CTkFrame(center, fg_color="transparent")
+        self.center_container.pack(fill="both", expand=True, padx=12, pady=(2, 12))
+
+        self.grid_view = ctk.CTkFrame(self.center_container, fg_color="transparent")
+        self.grid_view.pack(fill="both", expand=True)
+        self.grid_view.grid_columnconfigure((0, 1, 2), weight=1)
+        self.grid_view.grid_rowconfigure((0, 1, 2), weight=1)
+
+        for idx, (eid, cfg) in enumerate(LIGHTS_CONFIG.items()):
+            r, c = divmod(idx, 3)
+            card = LightControlCard(
+                self.grid_view,
+                entity_id=eid,
+                cfg=cfg,
+                engine=self.engine,
+                on_select_callback=self.select_entity_for_inspector,
+            )
+            card.grid(row=r, column=c, padx=5, pady=5, sticky="nsew")
+            self.cards[eid] = card
+
+        self.map_view = ctk.CTkFrame(self.center_container, fg_color="#090D16", corner_radius=12)
+        self.room_canvas = ctk.CTkCanvas(
+            self.map_view, bg="#090D16", highlightthickness=0, cursor="hand2"
+        )
+        self.room_canvas.pack(fill="both", expand=True, padx=8, pady=8)
+        self.room_canvas.bind("<ButtonPress-1>", self.on_room_canvas_press)
+        self.room_canvas.bind("<B1-Motion>", self.on_room_canvas_drag)
+        self.room_canvas.bind("<ButtonRelease-1>", self.on_room_canvas_release)
+
+    # -----------------------------------------------------------------
+    # PRAWY PANEL: KOŁO BARW HSV + WŁASNE SCENY
+    # -----------------------------------------------------------------
+    def _build_right_inspector(self):
+        inspector = ctk.CTkFrame(self.workspace, width=290, corner_radius=14, fg_color="#0F172A")
+        inspector.grid(row=0, column=2, sticky="ns", padx=(12, 0))
+        inspector.grid_propagate(False)
+
+        ctk.CTkLabel(
+            inspector,
+            text="INSPEKTOR & KOŁO BARW",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#64748B",
+        ).pack(anchor="w", padx=16, pady=(12, 2))
+
+        self.insp_title = ctk.CTkLabel(
+            inspector,
+            text=LIGHTS_CONFIG[self.selected_entity]["name"],
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color="#38BDF8",
+        )
+        self.insp_title.pack(anchor="w", padx=16)
+
+        self.insp_entity_lbl = ctk.CTkLabel(
+            inspector,
+            text=self.selected_entity,
+            font=ctk.CTkFont(family="Menlo", size=11),
+            text_color="#64748B",
+        )
+        self.insp_entity_lbl.pack(anchor="w", padx=16, pady=(0, 6))
+
+        self.target_scope = ctk.CTkSegmentedButton(
+            inspector,
+            values=["🎯 Wybrana lampa", "🏠 Cały pokój (9)"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+        )
+        self.target_scope.set("🎯 Wybrana lampa")
+        self.target_scope.pack(fill="x", padx=16, pady=(0, 6))
+
+        self.wheel_size = 195
+        self.wheel_canvas = ctk.CTkCanvas(
+            inspector,
+            width=self.wheel_size,
+            height=self.wheel_size,
+            bg="#0F172A",
+            highlightthickness=0,
+            cursor="crosshair",
+        )
+        self.wheel_canvas.pack(pady=2)
+        self._draw_hsv_color_wheel()
+        self.wheel_cursor = self.wheel_canvas.create_oval(
+            92, 92, 104, 104, outline="#FFFFFF", width=2, fill="#FFFFFF"
+        )
+        self.wheel_canvas.bind("<Button-1>", self.on_color_wheel_pick)
+        self.wheel_canvas.bind("<B1-Motion>", self.on_color_wheel_pick)
+
+        preview_box = ctk.CTkFrame(inspector, fg_color="#111827", corner_radius=8)
+        preview_box.pack(fill="x", padx=16, pady=4)
+
+        self.hex_preview = ctk.CTkLabel(
+            preview_box,
+            text="#FFFFFF  |  RGB(255, 255, 255)",
+            font=ctk.CTkFont(family="Menlo", size=11, weight="bold"),
+            height=26,
+            corner_radius=6,
+            fg_color="#1E293B",
+        )
+        self.hex_preview.pack(fill="x", padx=6, pady=6)
+
+        presets_grid = ctk.CTkFrame(inspector, fg_color="transparent")
+        presets_grid.pack(fill="x", padx=14, pady=2)
+        presets_grid.grid_columnconfigure((0, 1), weight=1)
+
+        studio_presets = [
+            ("🕯️ Świeca 2200K",   None, 2200, "#F97316"),
+            ("☕ Ciepła 3000K",    None, 3000, "#F59E0B"),
+            ("☀️ Neutral 4500K",   None, 4500, "#EAB308"),
+            ("❄️ Dzienna 6500K",   None, 6500, "#38BDF8"),
+        ]
+
+        for idx, (label, rgb_val, k_val, btn_col) in enumerate(studio_presets):
+            r, c = divmod(idx, 2)
+            ctk.CTkButton(
+                presets_grid,
+                text=label,
+                height=26,
+                corner_radius=6,
+                fg_color="#1E293B",
+                hover_color=btn_col,
+                font=ctk.CTkFont(size=11),
+                command=lambda r_v=rgb_val, k_v=k_val: self.apply_inspector_preset(r_v, k_v),
+            ).grid(row=r, column=c, padx=3, pady=2, sticky="ew")
+
+        ctk.CTkLabel(
+            inspector,
+            text="WŁASNE SCENY POKOJU (MACOS & TELEFON)",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#64748B",
+        ).pack(anchor="w", padx=16, pady=(8, 2))
+
+        save_row = ctk.CTkFrame(inspector, fg_color="transparent")
+        save_row.pack(fill="x", padx=14, pady=2)
+
+        self.preset_entry = ctk.CTkEntry(
+            save_row,
+            placeholder_text="Nazwa sceny...",
+            height=28,
+            font=ctk.CTkFont(size=11),
+        )
+        self.preset_entry.pack(side="left", fill="x", expand=True, padx=(2, 4))
+
+        ctk.CTkButton(
+            save_row,
+            text="💾 Zapisz",
+            width=72,
+            height=28,
+            fg_color="#0D9488",
+            hover_color="#0F766E",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self.save_new_user_preset,
+        ).pack(side="right", padx=2)
+
+        self.user_presets_frame = ctk.CTkScrollableFrame(
+            inspector, height=85, fg_color="#111827", corner_radius=8
+        )
+        self.user_presets_frame.pack(fill="both", expand=True, padx=14, pady=(4, 10))
+        self.refresh_user_presets_ui()
+
+    def refresh_user_presets_ui(self):
+        for widget in self.user_presets_frame.winfo_children():
+            widget.destroy()
+
+        for name in list(self.engine.user_presets.keys()):
+            row = ctk.CTkFrame(self.user_presets_frame, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+
+            ctk.CTkButton(
+                row,
+                text=f"✨ {name}",
+                anchor="w",
+                height=26,
+                fg_color="#1E293B",
+                hover_color="#2563EB",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                command=lambda n=name: self.load_user_preset(n),
+            ).pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+            ctk.CTkButton(
+                row,
+                text="✕",
+                width=26,
+                height=26,
+                fg_color="#334155",
+                hover_color="#DC2626",
+                font=ctk.CTkFont(size=11),
+                command=lambda n=name: self.delete_user_preset(n),
+            ).pack(side="right")
+
+    def save_new_user_preset(self):
+        name = self.preset_entry.get().strip()
+        if not name:
+            name = f"Scena {len(self.engine.user_presets) + 1}"
+        self.engine.save_current_as_preset(name)
+        self._last_preset_count = len(self.engine.user_presets)
+        self.preset_entry.delete(0, "end")
+        self.refresh_user_presets_ui()
+        self.status_label.configure(text=f"💾 Zapisano własną scenę pokoju: '{name}'", text_color="#4ADE80")
+
+    def load_user_preset(self, name: str):
+        self._highlight_mode_btn("IDLE")
+        self.engine.activate_user_preset(name)
+        self.status_label.configure(text=f"✨ Wczytano scenę użytkownika: '{name}'", text_color="#38BDF8")
+
+    def delete_user_preset(self, name: str):
+        self.engine.user_presets.pop(name, None)
+        self._last_preset_count = len(self.engine.user_presets)
+        self.engine.save_presets_to_disk()
+        self.refresh_user_presets_ui()
+
+    def _draw_hsv_color_wheel(self):
+        radius = self.wheel_size // 2 - 8
+        cx, cy = self.wheel_size // 2, self.wheel_size // 2
+
+        for r_step in range(radius, 0, -6):
+            sat = r_step / float(radius)
+            circumference = max(24, int(2 * math.pi * r_step / 4))
+            for i in range(circumference):
+                angle = (2 * math.pi * i) / circumference
+                hue = (angle / (2 * math.pi)) % 1.0
+                r, g, b = colorsys.hsv_to_rgb(hue, sat, 1.0)
+                hex_c = rgb_to_hex((int(r * 255), int(g * 255), int(b * 255)))
+                x = cx + r_step * math.cos(angle)
+                y = cy + r_step * math.sin(angle)
+                self.wheel_canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=hex_c, outline=hex_c)
+
+    def on_color_wheel_pick(self, event):
+        cx, cy = self.wheel_size // 2, self.wheel_size // 2
+        radius = self.wheel_size // 2 - 8
+        dx = event.x - cx
+        dy = event.y - cy
+        dist = math.hypot(dx, dy)
+        if dist > radius:
+            dx = dx * (radius / dist)
+            dy = dy * (radius / dist)
+            dist = radius
+
+        angle = math.atan2(dy, dx) % (2 * math.pi)
+        hue = angle / (2 * math.pi)
+        sat = dist / float(radius)
+
+        r, g, b = colorsys.hsv_to_rgb(hue, sat, 1.0)
+        rgb = (int(r * 255), int(g * 255), int(b * 255))
+        hex_c = rgb_to_hex(rgb)
+
+        self.wheel_canvas.coords(
+            self.wheel_cursor, cx + dx - 6, cy + dy - 6, cx + dx + 6, cy + dy + 6
+        )
+        self.wheel_canvas.itemconfig(self.wheel_cursor, fill=hex_c)
+        self.hex_preview.configure(
+            text=f"{hex_c.upper()}  |  RGB{rgb}",
+            fg_color=hex_c,
+            text_color="#0F172A" if (rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114) > 150 else "#F8FAFC",
+        )
+
+        if self.target_scope.get() == "🏠 Cały pokój (9)":
+            self.engine.manual_apply_to_all(rgb=rgb, bri=int(255 * self.engine.master_brightness))
+            self._highlight_mode_btn("IDLE")
+        else:
+            self.engine.manual_set_light(self.selected_entity, rgb=rgb, transition=0.12)
+
+    def apply_inspector_preset(self, rgb_val, k_val):
+        if self.target_scope.get() == "🏠 Cały pokój (9)":
+            self.engine.manual_apply_to_all(
+                rgb=rgb_val, kelvin=k_val, bri=int(255 * self.engine.master_brightness)
+            )
+            self._highlight_mode_btn("IDLE")
+        else:
+            self.engine.manual_set_light(
+                self.selected_entity, rgb=rgb_val, kelvin=k_val, transition=0.35
+            )
+
+    # -----------------------------------------------------------------
+    # DOLNY PASEK STATUSU
+    # -----------------------------------------------------------------
+    def _build_bottom_bar(self):
+        bottom = ctk.CTkFrame(self, fg_color="#0F172A", corner_radius=0, height=48)
+        bottom.pack(fill="x", side="bottom")
+
+        self.crop_lbl = ctk.CTkLabel(
+            bottom,
+            text="🖥️ Analiza ekranu: Pełny obraz  |  Luma L: 0.00  P: 0.00",
+            font=ctk.CTkFont(family="Menlo", size=11),
+            text_color="#94A3B8",
+        )
+        self.crop_lbl.pack(side="left", padx=20, pady=10)
+
+        ctk.CTkButton(
+            bottom,
+            text="🚪 Zamknij Studio i Zgaś Światła",
+            fg_color="#991B1B",
+            hover_color="#DC2626",
+            height=30,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self.on_exit,
+        ).pack(side="right", padx=20, pady=8)
+
+        ctk.CTkButton(
+            bottom,
+            text="⏸️ Zamknij (Zostaw światła włączone)",
+            fg_color="#1E293B",
+            hover_color="#334155",
+            height=30,
+            font=ctk.CTkFont(size=12),
+            command=self.on_exit_keep_lights,
+        ).pack(side="right", padx=4, pady=8)
+
+    # -----------------------------------------------------------------
+    # INTERAKTYWNA MAPA POKOJU 2D
+    # -----------------------------------------------------------------
+    def select_entity_for_inspector(self, entity_id: str):
+        self.selected_entity = entity_id
+        self.insp_title.configure(text=LIGHTS_CONFIG[entity_id]["name"])
+        self.insp_entity_lbl.configure(text=entity_id)
+
+    def switch_center_view(self, value: str):
+        if "Mapa" in value:
+            self.grid_view.pack_forget()
+            self.map_view.pack(fill="both", expand=True)
+            self.draw_spatial_room_map()
+        else:
+            self.map_view.pack_forget()
+            self.grid_view.pack(fill="both", expand=True)
+
+    def draw_spatial_room_map(self):
+        c = self.room_canvas
+        c.delete("all")
+        w = max(480, c.winfo_width())
+        h = max(420, c.winfo_height())
+
+        c.create_rectangle(30, 25, w - 30, h - 25, outline="#1E293B", width=2, fill="#0B1120")
+        c.create_rectangle(w * 0.32, 35, w * 0.68, 72, outline="#334155", fill="#1E293B")
+        c.create_text(w * 0.50, 53, text="🖥️ BIURKO & MONITOR (Przeciągnij lampy myszką)", fill="#94A3B8", font=("Menlo", 10, "bold"))
+
+        c.create_rectangle(w * 0.33, h * 0.62, w * 0.67, h * 0.80, outline="#334155", fill="#162032")
+        c.create_text(w * 0.50, h * 0.71, text="🛋️ NAROŻNIK / SOFA", fill="#64748B", font=("Menlo", 10, "bold"))
+
+        c.create_text(w * 0.18, h * 0.88, text="☕ STREFA KUCHNI", fill="#475569", font=("Menlo", 10, "bold"))
+        c.create_text(w * 0.83, h * 0.88, text="🚪 WEJŚCIE", fill="#475569", font=("Menlo", 10, "bold"))
+
+        for eid, cfg in LIGHTS_CONFIG.items():
+            px, py = cfg["pos"]
+            x = int(40 + px * (w - 80))
+            y = int(40 + py * (h - 80))
+            state = self.engine.current_ui_state[eid]
+            is_on = state.get("is_on", False) and state.get("bri", 0) > 0
+            rgb = state.get("rgb", (0, 0, 0))
+            bri = state.get("bri", 0)
+            hex_col = rgb_to_hex(rgb) if is_on else "#1E293B"
+            is_flashing = (self.engine.mode == "SPOTIFY" and eid in self.engine.spotify_sync.active_flashes)
+
+            if is_on:
+                glow_r = int(24 + (bri / 255.0) * (36 if is_flashing else 28))
+                c.create_oval(
+                    x - glow_r, y - glow_r, x + glow_r, y + glow_r,
+                    outline="#FFFFFF" if is_flashing else hex_col,
+                    width=3 if is_flashing else 2,
+                    fill="#111827"
+                )
+
+            is_sel = (eid == self.selected_entity)
+            node_r = 20
+            c.create_oval(
+                x - node_r, y - node_r, x + node_r, y + node_r,
+                fill=hex_col,
+                outline="#4ADE80" if is_flashing else ("#FFFFFF" if is_sel else "#475569"),
+                width=3 if (is_sel or is_flashing) else 1,
+            )
+            bri_pct = int((bri / 255.0) * 100) if is_on else 0
+            c.create_text(
+                x, y + 32,
+                text=f"{cfg['name']}\n({bri_pct}%)",
+                fill="#F8FAFC" if is_sel else "#CBD5E1",
+                font=("Helvetica", 10, "bold" if is_sel else "normal"),
+                justify="center",
+            )
+
+    def on_room_canvas_press(self, event):
+        c = self.room_canvas
+        w = max(480, c.winfo_width())
+        h = max(420, c.winfo_height())
+        best_eid = None
+        best_dist = 9999.0
+        for eid, cfg in LIGHTS_CONFIG.items():
+            px, py = cfg["pos"]
+            x = int(40 + px * (w - 80))
+            y = int(40 + py * (h - 80))
+            d = math.hypot(event.x - x, event.y - y)
+            if d < best_dist and d < 48:
+                best_dist = d
+                best_eid = eid
+        if best_eid:
+            self._dragging_map_entity = best_eid
+            self.select_entity_for_inspector(best_eid)
+            self.draw_spatial_room_map()
+
+    def on_room_canvas_drag(self, event):
+        if not self._dragging_map_entity:
+            return
+        c = self.room_canvas
+        w = max(480, c.winfo_width())
+        h = max(420, c.winfo_height())
+        nx = float(np.clip((event.x - 40) / float(max(1, w - 80)), 0.04, 0.96))
+        ny = float(np.clip((event.y - 40) / float(max(1, h - 80)), 0.06, 0.92))
+        LIGHTS_CONFIG[self._dragging_map_entity]["pos"] = [nx, ny]
+        self.draw_spatial_room_map()
+
+    def on_room_canvas_release(self, _event):
+        if self._dragging_map_entity:
+            self._dragging_map_entity = None
+            self.engine.save_presets_to_disk()
+
+    def _highlight_mode_btn(self, active_key: str):
+        for key, (btn, col) in self.mode_buttons.items():
+            if key == active_key:
+                btn.configure(
+                    fg_color=col,
+                    text_color="#0F172A" if key == "MAX_WHITE" else "#F8FAFC",
+                )
+            else:
+                btn.configure(fg_color="#1E293B", text_color="#F8FAFC")
+
+    def switch_mode(self, mode_key: str):
+        if mode_key == "MAX_WHITE":
+            self.activate_max_white()
+            return
+        if mode_key == "IDLE":
+            self._highlight_mode_btn("IDLE")
+            self.engine.set_manual_passthrough()
+            self.status_label.configure(
+                text=f"Tryb: 🎛️ Sterowanie ręczne HA Live  |  📱 Pilot: {self.engine.mobile_server.url}",
+                text_color="#38BDF8",
+            )
+            return
+
+        if mode_key == "SPOTIFY":
+            self.engine.spotify_sync.trigger_immediate_poll()
+
+        self._highlight_mode_btn(mode_key)
+        self.status_label.configure(
+            text=f"🌊 Płynna fala przestrzenna ➔ Uruchamianie trybu: {mode_key}...",
+            text_color="#4ADE80" if mode_key == "SPOTIFY" else "#38BDF8",
+        )
+        self.engine.trigger_spatial_wave(mode_key)
+
+    def activate_max_white(self):
+        self._highlight_mode_btn("MAX_WHITE")
+        self.engine.set_max_white_mode()
+        self.status_label.configure(
+            text=f"☀️ Tryb: PEŁNA BIEL (100% jasności | Natywna barwa: {self.engine.white_temp_kelvin}K)",
+            text_color="#FACC15",
+        )
+
+    def sleep_all_lights(self):
+        self._highlight_mode_btn("IDLE")
+        self.engine.turn_off_lights_and_standby()
+        self.status_label.configure(
+            text="🌑 Wszystkie światła wygaszone (Tryb Ręczny / Standby)",
+            text_color="#F87171",
+        )
+
+    def set_all_participation(self, state: bool):
+        for eid in LIGHTS_CONFIG:
+            self.engine.enabled_lights[eid] = state
+            self.engine.last_sent_state.pop(eid, None)
+
+    def on_smart_switches(self):
+        self.engine.auto_override_from_ha = bool(self.sw_override.get())
+        self.engine.circadian_enabled = bool(self.sw_circadian.get())
+        self.engine.spotify_sync.ceiling_strobe_enabled = bool(self.sw_ceiling_strobe.get())
+
+    def on_global_sliders(self, _=None):
+        self.engine.master_brightness = float(self.s_master.get())
+        self.engine.spotify_sync.strobe_density = int(round(self.s_strobe.get()))
+        self.engine.white_temp_kelvin = int(self.s_kelvin.get())
+        self.engine.saturation_boost = float(self.s_sat.get())
+
+        self.lbl_master.configure(text=f"Skala Jasności: {int(self.engine.master_brightness * 100)}%")
+        self.lbl_strobe.configure(text=f"Błyski Spotify naraz: {self.engine.spotify_sync.strobe_density} lampy")
+        self.lbl_kelvin.configure(text=f"Temp. Bieli: {self.engine.white_temp_kelvin}K")
+        self.lbl_sat.configure(text=f"Nasycenie Kolorów: {self.engine.saturation_boost:.2f}x")
+        if self.engine.mode == "MAX_WHITE":
+            self.engine.set_max_white_mode()
+
+    # -----------------------------------------------------------------
+    # PĘTLA ODŚWIEŻANIA GUI
+    # -----------------------------------------------------------------
+    def update_telemetry_loop(self):
+        if self.engine.ws_client.connected:
+            self.ws_badge.configure(text="● WS ONLINE", text_color="#4ADE80")
+        else:
+            self.ws_badge.configure(text="● REST FALLBACK", text_color="#FACC15")
+
+        if self.engine.last_override_notice:
+            self.status_label.configure(text=self.engine.last_override_notice, text_color="#FACC15")
+            self.engine.last_override_notice = ""
+
+        # Aktualizacja paska Spotify w górnym panelu
+        sp = self.engine.spotify_sync
+        self.sp_swatch1.configure(fg_color=rgb_to_hex(sp.color1_rgb))
+        self.sp_swatch2.configure(fg_color=rgb_to_hex(sp.color2_rgb))
+        short_title = (sp.title[:22] + "…") if len(sp.title) > 23 else sp.title
+        if sp.is_playing:
+            self.sp_top_lbl.configure(text=f"🎵 {short_title} ({int(sp.bpm)} BPM)", text_color="#4ADE80")
+        else:
+            self.sp_top_lbl.configure(text=f"⏸️ {short_title} (EKG)", text_color="#94A3B8")
+
+        # Synchronizacja suwaków globalnych, jeśli zmieniono je na telefonie
+        self.lbl_master.configure(text=f"Skala Jasności: {int(self.engine.master_brightness * 100)}%")
+        self.lbl_strobe.configure(text=f"Błyski Spotify naraz: {sp.strobe_density} lampy")
+        self.lbl_kelvin.configure(text=f"Temp. Bieli: {self.engine.white_temp_kelvin}K")
+        self.lbl_sat.configure(text=f"Nasycenie Kolorów: {self.engine.saturation_boost:.2f}x")
+
+        active_cnt = sum(1 for v in self.engine.enabled_lights.values() if v)
+        self.metrics_lbl.configure(
+            text=f"RTT: {self.engine.ha_ping_ms:3.1f} ms | FPS: {self.engine.fps:4.1f} | Sync: {active_cnt}/9"
+        )
+        self.crop_lbl.configure(
+            text=(
+                f"🖥️ Auto-Crop: {self.engine.crop_info}  |  "
+                f"Luma L: {self.engine.luma_left:.2f}  P: {self.engine.luma_right:.2f}  |  "
+                f"🎵 Spotify: {sp.title} — {sp.artist}"
+            )
+        )
+
+        for eid, card in self.cards.items():
+            card.refresh_from_state(is_selected=(eid == self.selected_entity))
+
+        if "Mapa" in self.view_switcher.get() and not self._dragging_map_entity:
+            self.draw_spatial_room_map()
+
+        if self.engine.running:
+            self.after(80, self.update_telemetry_loop)
+
+    def on_exit_keep_lights(self):
+        self.engine.running = False
+        self.engine.save_presets_to_disk()
+        self.engine.mobile_server.stop()
+        self.engine.ws_client.close()
+        self.destroy()
+
+    def on_exit(self):
+        self.status_label.configure(text="🌙 Wygaszanie świateł i zamykanie sesji...", text_color="#F87171")
+        self.update()
+        self.engine.turn_off_all_smoothly()
+        time.sleep(0.25)
+        self.destroy()
+
+
+if __name__ == "__main__":
+    engine = AmbientEngine(dev_mode="--dev" in sys.argv)
+
+    worker = threading.Thread(target=engine.run_loop, daemon=True)
+    worker.start()
+
+    app = AmbientStudioApp(engine)
+    app.mainloop()
+
+    
