@@ -15,11 +15,17 @@ async function getAccessToken(env) {
     const clientSecret = env.SPOTIFY_CLIENT_SECRET;
     const refreshToken = env.SPOTIFY_REFRESH_TOKEN;
     
-    if (!clientId || !clientSecret || !refreshToken) {
-        throw new Error('Missing Spotify environment variables');
+    // Wskazanie dokładnie, której zmiennej brakuje
+    const missing = [];
+    if (!clientId) missing.push('SPOTIFY_CLIENT_ID');
+    if (!clientSecret) missing.push('SPOTIFY_CLIENT_SECRET');
+    if (!refreshToken) missing.push('SPOTIFY_REFRESH_TOKEN');
+    
+    if (missing.length > 0) {
+        throw new Error(`Brak zmiennych w Cloudflare: ${missing.join(', ')}`);
     }
     
-    const basic = btoa(`${clientId}:${clientSecret}`);
+    const basic = btoa(`${clientId.trim()}:${clientSecret.trim()}`);
     
     const response = await fetch(TOKEN_ENDPOINT, {
         method: 'POST',
@@ -29,12 +35,13 @@ async function getAccessToken(env) {
         },
         body: new URLSearchParams({
             grant_type: 'refresh_token',
-            refresh_token: refreshToken
-        })
+            refresh_token: refreshToken.trim()
+        }).toString()
     });
     
     if (!response.ok) {
-        throw new Error(`Failed to refresh token: ${response.status}`);
+        const errorDetails = await response.text();
+        throw new Error(`Spotify token error (${response.status}): ${errorDetails}`);
     }
     
     const data = await response.json();
