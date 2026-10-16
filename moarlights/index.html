@@ -1,0 +1,299 @@
+
+<!-- version: 4.2 (Strobe Pause Fix & 60FPS Smooth Progress Interpolation) -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>skawiskawi.pl - skawiskawiskawiskawi</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='grad' x1='0%' y1='100%' x2='100%' y2='0%'><stop offset='0%' stop-color='%236366f1'/><stop offset='50%' stop-color='%23d946ef'/><stop offset='100%' stop-color='%2306b6d4'/></linearGradient></defs><rect width='64' height='64' rx='16' fill='%23090a0f'/><path d='M16 40V24M24 48V16M32 44V20M40 52V12M48 38V26' stroke='url(%23grad)' stroke-width='5' stroke-linecap='round'/></svg>">
+    <script defer src="https://cloud.umami.is/script.js" data-website-id="f37d28ec-ae34-4c10-8203-84ead5f71cbd"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #050608;
+            --card-bg: rgba(255, 255, 255, 0.035);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --card-hover-bg: rgba(255, 255, 255, 0.07);
+            --text-main: #f8fafc;
+            --text-muted: #64748b;
+            --dynamic-accent: #1ed760;
+            --dynamic-accent-2: #6366f1;
+            --bpm-speed-mult: 1;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            width: 100%;
+            min-height: 100dvh;
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        .spotify-bg-blur {
+            position: fixed; top: -10%; left: -10%; width: 120vw; height: 120vh;
+            background-size: cover; background-position: center; background-repeat: no-repeat;
+            filter: blur(50px) saturate(120%); opacity: 0; z-index: 0; pointer-events: none;
+            transition: opacity 1.5s ease; will-change: opacity; transform: translateZ(0);
+        }
+
+        #interactive-bg, #strobe-container {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100dvh; pointer-events: none;
+        }
+
+        #interactive-bg { z-index: 1; }
+        #strobe-container { z-index: 2; overflow: hidden; }
+
+        .strobe-flash {
+            position: absolute; border-radius: 50%;
+            background: radial-gradient(circle at center, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.12) 35%, rgba(255, 255, 255, 0.03) 65%, transparent 100%);
+            filter: blur(18px); opacity: 0; mix-blend-mode: screen; transform: translate(-50%, -50%);
+            transition: opacity 0.06s ease-out; will-change: opacity;
+        }
+
+        .noise-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100dvh; pointer-events: none;
+            z-index: 3; opacity: 0.035; mix-blend-mode: overlay; background-repeat: repeat;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        .container {
+            position: relative; z-index: 5; width: 100%; min-height: 100dvh; display: flex;
+            flex-direction: column; justify-content: space-between; align-items: center;
+            padding: clamp(16px, 2.5vh, 28px) 20px;
+            padding-top: max(clamp(16px, 2.5vh, 28px), env(safe-area-inset-top));
+            padding-bottom: max(clamp(16px, 2.5vh, 28px), env(safe-area-inset-bottom));
+            perspective: 1000px;
+        }
+
+        .header-spacer { height: 1px; }
+
+        .main-content {
+            width: 100%; max-width: 310px; display: flex; flex-direction: column;
+            align-items: center; gap: clamp(12px, 2vh, 18px); margin: auto 0;
+        }
+
+        .sound-wave-container {
+            width: 100%; height: 52px; display: flex; align-items: center; justify-content: center;
+            position: relative; user-select: none; transition: opacity 0.5s ease;
+            animation: stagger-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 0.05s; overflow: visible;
+        }
+
+        #soundwave-canvas { width: 100%; height: 100%; display: block; }
+
+        .links-wrapper { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+
+        .link-btn {
+            position: relative; display: flex; align-items: center; justify-content: center; gap: 10px;
+            width: 100%; min-height: 40px; padding: 9px 16px; background: var(--card-bg);
+            border: 1px solid var(--card-border); border-radius: 12px; color: var(--text-main);
+            text-decoration: none; font-size: 0.86rem; font-weight: 600; letter-spacing: 0.3px;
+            backdrop-filter: blur(24px) saturate(140%); -webkit-backdrop-filter: blur(24px) saturate(140%);
+            transition: transform 0.18s cubic-bezier(0.25, 1, 0.5, 1), background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); transform-style: preserve-3d; will-change: transform;
+            animation: stagger-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        .link-btn svg { width: 17px; height: 17px; fill: currentColor; flex-shrink: 0; transition: transform 0.2s ease; }
+
+        .links-wrapper a:nth-child(1) { animation-delay: 0.10s; }
+        .links-wrapper a:nth-child(2) { animation-delay: 0.16s; }
+        .links-wrapper a:nth-child(3) { animation-delay: 0.22s; }
+        .links-wrapper div:nth-child(4) { animation-delay: 0.26s; }
+        .links-wrapper a:nth-child(5) { animation-delay: 0.30s; }
+        .links-wrapper div:nth-child(6) { animation-delay: 0.34s; }
+        .links-wrapper a:nth-child(7) { animation-delay: 0.38s; }
+
+        @keyframes stagger-in {
+            0% { opacity: 0; transform: translateY(18px) scale(0.96); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        @media (hover: hover) {
+            .link-btn:hover { background: var(--card-hover-bg); }
+            .link-btn.spotify:hover { border-color: rgba(30, 215, 96, 0.4); box-shadow: 0 0 18px rgba(30, 215, 96, 0.2); }
+            .link-btn.genius:hover { border-color: rgba(255, 225, 0, 0.4); box-shadow: 0 0 18px rgba(255, 225, 0, 0.2); }
+            .link-btn.statsfm:hover { border-color: rgba(168, 85, 247, 0.4); box-shadow: 0 0 18px rgba(168, 85, 247, 0.2); }
+            .link-btn.fortnite:hover { border-color: rgba(56, 189, 248, 0.4); box-shadow: 0 0 18px rgba(56, 189, 248, 0.2); }
+            .link-btn.github:hover { border-color: rgba(255, 255, 255, 0.4); box-shadow: 0 0 18px rgba(255, 255, 255, 0.2); }
+            .link-btn:active { transform: scale(0.97) !important; }
+        }
+
+        .section-divider {
+            display: flex; align-items: center; justify-content: center; width: 100%;
+            margin: 4px 0 2px 0; gap: 12px; animation: stagger-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        .section-divider::before, .section-divider::after {
+            content: ''; flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08);
+        }
+
+        .section-divider span {
+            font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 1.5px; color: rgba(255, 255, 255, 0.3);
+        }
+
+        .spotify-widget {
+            width: 100%; margin-top: 2px; padding: 9px 13px 11px 13px;
+            background: rgba(255, 255, 255, 0.025); border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 16px; backdrop-filter: blur(28px) saturate(150%);
+            -webkit-backdrop-filter: blur(28px) saturate(150%); display: flex; align-items: center; gap: 12px;
+            text-decoration: none; color: inherit; transition: transform 0.18s cubic-bezier(0.25, 1, 0.5, 1), background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35); position: relative; overflow: hidden;
+            will-change: transform; transform-style: preserve-3d;
+            animation: stagger-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 0.44s;
+        }
+
+        .spotify-widget::before {
+            content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
+            background: conic-gradient(transparent, var(--dynamic-accent), transparent, var(--dynamic-accent-2));
+            animation: border-beam 4s linear infinite; z-index: 0; opacity: 0.4; pointer-events: none;
+        }
+
+        .spotify-widget::after {
+            content: ''; position: absolute; inset: 1px; background: #090a0f;
+            border-radius: 15px; z-index: 0; pointer-events: none;
+        }
+
+        @keyframes border-beam {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .spotify-widget-content { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; width: 100%; }
+
+        .album-cover-wrapper {
+            position: relative; width: 40px; height: 40px; flex-shrink: 0; border-radius: 8px;
+            overflow: hidden; background: rgba(255, 255, 255, 0.05);
+            box-shadow: 0 0 16px var(--dynamic-accent); transition: box-shadow 0.8s ease;
+        }
+
+        .album-cover { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
+
+        .track-info { display: flex; flex-direction: column; justify-content: center; min-width: 0; flex: 1; }
+
+        .status-badge {
+            display: flex; align-items: center; gap: 5px; font-size: 0.62rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.8px; color: var(--dynamic-accent);
+            margin-bottom: 2px; transition: color 0.8s ease;
+        }
+
+        .eq-mini {
+            display: flex; align-items: flex-end; gap: 1.5px; height: 12px; overflow: visible;
+        }
+
+        .eq-bar {
+            width: 1.5px; height: 100%; background-color: var(--dynamic-accent);
+            transform-origin: bottom; will-change: transform; transform: scaleY(0.2);
+            animation: eq-bounce 0.8s ease-in-out infinite alternate; transition: background-color 0.8s ease;
+        }
+
+        .eq-bar:nth-child(1) { animation-duration: 0.5s; }
+        .eq-bar:nth-child(2) { animation-duration: 0.7s; }
+        .eq-bar:nth-child(3) { animation-duration: 0.4s; }
+
+        @keyframes eq-bounce {
+            0% { transform: scaleY(0.2); }
+            100% { transform: scaleY(1); }
+        }
+
+        .track-title {
+            font-size: 0.80rem; font-weight: 700; color: var(--text-main);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+
+        .track-artist {
+            font-size: 0.70rem; color: var(--text-muted); white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis; margin-top: 1px;
+        }
+
+        .progress-bar-container {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 2.5px;
+            background: rgba(255, 255, 255, 0.08); z-index: 2;
+        }
+
+        .progress-bar {
+            height: 100%; width: 0%; background: linear-gradient(90deg, var(--dynamic-accent), var(--dynamic-accent-2));
+            transition: width 0.15s linear;
+        }
+
+        .contact-wrapper {
+            margin-top: 6px; margin-bottom: 2px; animation: stagger-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 0.48s;
+        }
+
+        .contact-icon-btn {
+            display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px;
+            border-radius: 50%; background: var(--card-bg); border: 1px solid var(--card-border);
+            color: var(--text-muted); text-decoration: none; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+            transition: transform 0.18s cubic-bezier(0.25, 1, 0.5, 1), background 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+            will-change: transform; transform-style: preserve-3d;
+        }
+
+        .contact-icon-btn svg { width: 16px; height: 16px; fill: currentColor; transition: transform 0.2s ease; }
+
+        @media (hover: hover) {
+            .contact-icon-btn:hover {
+                background: var(--card-hover-bg); color: var(--text-main); border-color: var(--dynamic-accent);
+                box-shadow: 0 0 16px var(--dynamic-accent); transform: scale(1.08) translateY(-2px);
+            }
+            .contact-icon-btn:active { transform: scale(0.94) !important; }
+        }
+
+        footer { text-align: center; margin-top: 10px; animation: stagger-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 0.52s; }
+
+        .footer-text {
+            font-size: clamp(0.75rem, 2vw, 0.85rem); font-weight: 500; letter-spacing: 6px;
+            background: linear-gradient(135deg, #94a3b8, #cbd5e1); -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent; text-transform: lowercase; user-select: none; padding-left: 6px;
+        }
+
+        @media (max-width: 768px) {
+            #interactive-bg { opacity: 0.95; filter: saturate(1.1); }
+        }
+
+        @media (max-height: 600px) {
+            .sound-wave-container { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="spotify-bg-blur" id="spotify-bg-1"></div>
+    <div class="spotify-bg-blur" id="spotify-bg-2"></div>
+    <div class="noise-overlay"></div>
+    <canvas id="interactive-bg"></canvas>
+    <div id="strobe-container"></div>
+    <div class="container">
+        <div class="header-spacer"></div>
+        <div class="main-content">
+            <div class="sound-wave-container" id="sound-wave-wrapper">
+                <canvas id="soundwave-canvas"></canvas>
+            </div>
+            <main class="links-wrapper">
+                <a href="https://open.spotify.com/user/313sruf6nyv7gp4wo5bnyon5wqf4" target="_blank" rel="noopener noreferrer" class="link-btn spotify tilt-card" data-umami-event="click-spotify">
+                    <svg viewBox="0 0 24 24"><path d="M12 0C5.376 0 0 5.376 0 12s5.376 12 12 12 12-5.376 12-12S18.624 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.899 4.62-1.02 8.58-.6 11.7 1.32.42.18.48.66.24 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141 C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.18-1.38-.72-.18-.6.18-1.2.72-1.38 4.26-1.26 11.28-1.02 15.72 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg> Spotify
+                </a>
+                <a href="https://genius.com/skawi" target="_blank" rel="noopener noreferrer" class="link-btn genius tilt-card" data-umami-event="click-genius">
+                    <svg viewBox="0 0 24 24"><path d="M24 0H0v24h24V0zM4.8 19.2V4.8h4.8v14.4H4.8zm9.6 0h-3.6V4.8h3.6v14.4zm4.8 0h-3.6V4.8h3.6v14.4z"/></svg> Genius
+                </a>
+                <a href="https://stats.fm/skawi" target="_blank" rel="noopener noreferrer" class="link-btn statsfm tilt-card" data-umami-event="click-statsfm">
+                    <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg> Stats.fm
+                </a>
+                <div class="section-divider"> <span>gaming</span> </div>
+                <a href="https://fortnitetracker.com/profile/all/skawi" target="_blank" rel="noopener noreferrer" class="link-btn fortnite tilt-card" data-umami-event="click-fortnite">
+                    <svg viewBox="0 0 24 24"><path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-10 7H9v2H7v-2H5v-2h2V9h2v2h2v2zm4.5 1c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm3-3c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg> Fortnite Tracker
+                </a>
+                <div class="section-divider"> <span>code</span> </div>
+                <a href="https://github.com/skawiskawi" target="_blank" rel="noopener noreferrer" class="link-btn github tilt-card" data-umami-event="click-github">
+                    <svg viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729
