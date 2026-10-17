@@ -34,7 +34,7 @@ except ImportError:
 
 # Opcjonalna obsługa globalnych skrótów klawiszowych macOS w tle
 try:
-    from pynput import keyboard as pynput_keyboard
+    # zablokowano pynput
     HAS_PYNPUT = True
 except ImportError:
     HAS_PYNPUT = False
@@ -50,15 +50,15 @@ MOBILE_PORT = 8765
 PRESETS_FILE = Path.home() / ".spatial_ambient_presets.json"
 
 LIGHTS_CONFIG = {
-    "light.ambientl":        {"name": "2. Monitor Lewa",   "icon": "🖥️", "zone": "left",        "game_max": 1.00, "film_max": 0.85, "normal_max": 1.00, "is_ceiling": False, "pos": [0.36, 0.20]},
-    "light.ambientr":        {"name": "1. Monitor Prawa",  "icon": "🖥️", "zone": "right",       "game_max": 1.00, "film_max": 0.85, "normal_max": 1.00, "is_ceiling": False, "pos": [0.64, 0.20]},
-    "light.komputer":        {"name": "4. Sufit Biurko",   "icon": "💡", "zone": "top",         "game_max": 0.22, "film_max": 0.12, "normal_max": 0.05, "is_ceiling": True,  "pos": [0.50, 0.34]},
-    "light.lsc_moodlight":   {"name": "9. LSC Moodlight",  "icon": "🔮", "zone": "left_mid",    "game_max": 0.95, "film_max": 0.75, "normal_max": 0.35, "is_ceiling": False, "pos": [0.18, 0.38]},
-    "light.lampa_stojaca":   {"name": "8. Lampa Stojąca",  "icon": "🛋️", "zone": "right_mid",   "game_max": 0.70, "film_max": 0.50, "normal_max": 0.20, "is_ceiling": False, "pos": [0.82, 0.45]},
-    "light.kuchnia":         {"name": "5. Sufit Kuchnia",  "icon": "☕", "zone": "left_deep",   "game_max": 0.50, "film_max": 0.35, "normal_max": 0.08, "is_ceiling": True,  "pos": [0.20, 0.72]},
-    "light.drzwi_wejsciowe": {"name": "3. Sufit Drzwi",    "icon": "🚪", "zone": "right_deep",  "game_max": 0.35, "film_max": 0.25, "normal_max": 0.07, "is_ceiling": True,  "pos": [0.82, 0.75]},
-    "light.naroznik":        {"name": "6. Sufit Sofa",     "icon": "✨", "zone": "center_deep", "game_max": 0.35, "film_max": 0.25, "normal_max": 0.07, "is_ceiling": True,  "pos": [0.50, 0.68]},
-    "light.lampka_nocna":    {"name": "7. Za Sofą Róg",    "icon": "🌙", "zone": "center_deep", "game_max": 0.80, "film_max": 0.65, "normal_max": 0.22, "is_ceiling": False, "pos": [0.48, 0.88]},
+    "light.ambientl":        {"name": "2. Monitor Lewa",   "icon": "▣", "zone": "left",        "game_max": 1.00, "film_max": 0.85, "normal_max": 1.00, "is_ceiling": False, "pos": [0.36, 0.20]},
+    "light.ambientr":        {"name": "1. Monitor Prawa",  "icon": "▣", "zone": "right",       "game_max": 1.00, "film_max": 0.85, "normal_max": 1.00, "is_ceiling": False, "pos": [0.64, 0.20]},
+    "light.komputer":        {"name": "4. Sufit Biurko",   "icon": "☀", "zone": "top",         "game_max": 0.22, "film_max": 0.12, "normal_max": 0.05, "is_ceiling": True,  "pos": [0.50, 0.34]},
+    "light.lsc_moodlight":   {"name": "9. LSC Moodlight",  "icon": "◈", "zone": "left_mid",    "game_max": 0.95, "film_max": 0.75, "normal_max": 0.35, "is_ceiling": False, "pos": [0.18, 0.38]},
+    "light.lampa_stojaca":   {"name": "8. Lampa Stojąca",  "icon": "❖", "zone": "right_mid",   "game_max": 0.70, "film_max": 0.50, "normal_max": 0.20, "is_ceiling": False, "pos": [0.82, 0.45]},
+    "light.kuchnia":         {"name": "5. Sufit Kuchnia",  "icon": "♨", "zone": "left_deep",   "game_max": 0.50, "film_max": 0.35, "normal_max": 0.08, "is_ceiling": True,  "pos": [0.20, 0.72]},
+    "light.drzwi_wejsciowe": {"name": "3. Sufit Drzwi",    "icon": "▯", "zone": "right_deep",  "game_max": 0.35, "film_max": 0.25, "normal_max": 0.07, "is_ceiling": True,  "pos": [0.82, 0.75]},
+    "light.naroznik":        {"name": "6. Sufit Sofa",     "icon": "✦", "zone": "center_deep", "game_max": 0.35, "film_max": 0.25, "normal_max": 0.07, "is_ceiling": True,  "pos": [0.50, 0.68]},
+    "light.lampka_nocna":    {"name": "7. Za Sofą Róg",    "icon": "☾", "zone": "center_deep", "game_max": 0.80, "film_max": 0.65, "normal_max": 0.22, "is_ceiling": False, "pos": [0.48, 0.88]},
 }
 
 FLOW_SEQUENCE = [
@@ -571,7 +571,7 @@ MOBILE_PWA_HTML = """<!DOCTYPE html>
 
 <div class="top-bar">
   <div>
-    <div class="title">✨ SPATIAL AMBIENT v7.0</div>
+    <div class="title">✦ SPATIAL AMBIENT v7.0</div>
     <div class="subtitle" id="statusText">Łączenie z MacBookiem...</div>
   </div>
   <div class="badge" id="pingBadge">WS ●</div>
@@ -579,13 +579,13 @@ MOBILE_PWA_HTML = """<!DOCTYPE html>
 
 <div class="sec-title">Sceny Automatyczne</div>
 <div class="modes-grid">
-  <button class="mode-btn" style="grid-column: span 2;" id="btn-SPOTIFY" onclick="sendAct({action:'set_mode', mode:'SPOTIFY'})">🎵 SPOTIFY BEAT (Okładka + Błyski BPM)</button>
-  <button class="mode-btn" id="btn-ZWYKLY" onclick="sendAct({action:'set_mode', mode:'ZWYKLY'})">☕ Zwykły</button>
-  <button class="mode-btn" id="btn-GAMING" onclick="sendAct({action:'set_mode', mode:'GAMING'})">🎮 Gaming</button>
-  <button class="mode-btn" id="btn-FILM" onclick="sendAct({action:'set_mode', mode:'FILM'})">🎬 Kino / Film</button>
-  <button class="mode-btn" id="btn-NATI" onclick="sendAct({action:'set_mode', mode:'NATI'})">🌸 Nati (3s)</button>
-  <button class="mode-btn" id="btn-MAX_WHITE" onclick="sendAct({action:'set_mode', mode:'MAX_WHITE'})">☀️ Max Biel 100%</button>
-  <button class="mode-btn" id="btn-IDLE" onclick="sendAct({action:'set_mode', mode:'IDLE'})">🎛️ Ręczny (HA)</button>
+  <button class="mode-btn" style="grid-column: span 2;" id="btn-SPOTIFY" onclick="sendAct({action:'set_mode', mode:'SPOTIFY'})">♫ SPOTIFY BEAT (Okładka + Błyski BPM)</button>
+  <button class="mode-btn" id="btn-ZWYKLY" onclick="sendAct({action:'set_mode', mode:'ZWYKLY'})">♨ Zwykły</button>
+  <button class="mode-btn" id="btn-GAMING" onclick="sendAct({action:'set_mode', mode:'GAMING'})">◈ Gaming</button>
+  <button class="mode-btn" id="btn-FILM" onclick="sendAct({action:'set_mode', mode:'FILM'})">▸ Kino / Film</button>
+  <button class="mode-btn" id="btn-NATI" onclick="sendAct({action:'set_mode', mode:'NATI'})">❀ Nati (3s)</button>
+  <button class="mode-btn" id="btn-MAX_WHITE" onclick="sendAct({action:'set_mode', mode:'MAX_WHITE'})">☀ Max Biel 100%</button>
+  <button class="mode-btn" id="btn-IDLE" onclick="sendAct({action:'set_mode', mode:'IDLE'})">⊞ Ręczny (HA)</button>
 </div>
 
 <div class="spotify-banner">
@@ -600,16 +600,16 @@ MOBILE_PWA_HTML = """<!DOCTYPE html>
 </div>
 
 <div class="quick-row">
-  <button class="q-btn" onclick="sendAct({action:'set_mode', mode:'MAX_WHITE'})">💡 100% Biel</button>
-  <button class="q-btn" style="color:#F87171" onclick="sendAct({action:'sleep_all'})">🌑 Zgaś pokój</button>
-  <button class="q-btn" onclick="sendAct({action:'sync_all', state:true})">🔗 Sync 9/9</button>
-  <button class="q-btn" onclick="sendAct({action:'sync_all', state:false})">✋ Ręczny 9</button>
+  <button class="q-btn" onclick="sendAct({action:'set_mode', mode:'MAX_WHITE'})">☀ 100% Biel</button>
+  <button class="q-btn" style="color:#F87171" onclick="sendAct({action:'sleep_all'})">● Zgaś pokój</button>
+  <button class="q-btn" onclick="sendAct({action:'sync_all', state:true})">◈ Sync 9/9</button>
+  <button class="q-btn" onclick="sendAct({action:'sync_all', state:false})">▪ Ręczny 9</button>
 </div>
 
 <div class="sec-title">Parametry Globalne & Spotify Strobe</div>
 <div class="panel-card">
   <div class="slider-row">
-    <span class="slider-lbl">🔆 Skala Jasności</span>
+    <span class="slider-lbl">☀ Skala Jasności</span>
     <input type="range" id="gMaster" min="15" max="150" value="100" oninput="onGlobalSlide()">
     <span class="slider-val" id="vMaster">100%</span>
   </div>
@@ -619,12 +619,12 @@ MOBILE_PWA_HTML = """<!DOCTYPE html>
     <span class="slider-val" id="vStrobe">2 lampy</span>
   </div>
   <div class="slider-row">
-    <span class="slider-lbl">🌡️ Temp. Bieli</span>
+    <span class="slider-lbl">△ Temp. Bieli</span>
     <input type="range" id="gKelvin" min="2200" max="6500" step="50" value="4500" oninput="onGlobalSlide()">
     <span class="slider-val" id="vKelvin">4500K</span>
   </div>
   <div class="slider-row">
-    <span class="slider-lbl">🎨 Nasycenie</span>
+    <span class="slider-lbl">◈ Nasycenie</span>
     <input type="range" id="gSat" min="80" max="220" value="135" oninput="onGlobalSlide()">
     <span class="slider-val" id="vSat">1.35x</span>
   </div>
@@ -635,11 +635,11 @@ MOBILE_PWA_HTML = """<!DOCTYPE html>
   <div class="presets-bar" id="presetsBar"></div>
   <div class="save-row">
     <input type="text" class="save-input" id="presetName" placeholder="Nazwa nowej sceny...">
-    <button class="q-btn" style="padding:0 14px; background:#0D9488" onclick="savePreset()">💾 Zapisz</button>
+    <button class="q-btn" style="padding:0 14px; background:#0D9488" onclick="savePreset()">▪ Zapisz</button>
   </div>
 </div>
 
-<div class="sec-title">Wszystkie Światła (Zaznacz 🔗 SYNC dla błysków Spotify)</div>
+<div class="sec-title">Wszystkie Światła (Zaznacz ◈ SYNC dla błysków Spotify)</div>
 <div class="lights-list" id="lightsContainer"></div>
 
 <script>
@@ -742,13 +742,13 @@ function buildLightsDOM(lights) {
         </div>
       </div>
       <div class="slider-row">
-        <span style="font-size:12px">🔆</span>
+        <span style="font-size:12px">☀</span>
         <input type="range" id="bri-${l.id}" min="1" max="255" value="${l.bri}"
           oninput="markTouch(); fetch('/api/action',{method:'POST',body:JSON.stringify({action:'set_light',entity_id:'${l.id}',bri:parseInt(this.value)})})">
         <span class="slider-val" id="bval-${l.id}">${l.bri_pct}%</span>
       </div>
       <div class="slider-row">
-        <span style="font-size:12px">🌡️</span>
+        <span style="font-size:12px">△</span>
         <input type="range" id="ct-${l.id}" min="2000" max="6500" step="50" value="${l.kelvin}"
           oninput="markTouch(); fetch('/api/action',{method:'POST',body:JSON.stringify({action:'set_light',entity_id:'${l.id}',kelvin:parseInt(this.value)})})">
         <span class="slider-val" id="kval-${l.id}">${l.kelvin}K</span>
@@ -776,8 +776,8 @@ async function fetchState() {
 
     if (data.spotify) {
       document.getElementById('spStatus').innerText = data.spotify.is_playing
-        ? `🎵 NOW PLAYING • ${Math.round(data.spotify.bpm)} BPM`
-        : `⏸️ PAUZA (TRYB EKG 3.6s)`;
+        ? `♫ NOW PLAYING • ${Math.round(data.spotify.bpm)} BPM`
+        : `❚❚ PAUZA (TRYB EKG 3.6s)`;
       document.getElementById('spTrack').innerText = `${data.spotify.title} — ${data.spotify.artist}`;
       document.getElementById('spCol1').style.background = data.spotify.hex1;
       document.getElementById('spCol2').style.background = data.spotify.hex2;
@@ -799,7 +799,7 @@ async function fetchState() {
     data.presets.forEach(pName => {
       const btn = document.createElement('button');
       btn.className = 'preset-pill';
-      btn.innerText = '✨ ' + pName;
+      btn.innerText = '✦ ' + pName;
       btn.onclick = () => sendAct({action: 'load_preset', name: pName});
       pBar.appendChild(btn);
     });
@@ -816,7 +816,7 @@ async function fetchState() {
 
         const syncBtn = document.getElementById('sync-' + l.id);
         if (syncBtn) {
-          syncBtn.innerText = l.in_sync ? '🔗 SYNC' : '✋ RĘCZNY';
+          syncBtn.innerText = l.in_sync ? '◈ SYNC' : '▪ RĘCZNY';
           syncBtn.style.background = l.in_sync ? '#0F766E' : '#475569';
         }
         const pwrBtn = document.getElementById('pwr-' + l.id);
@@ -1319,7 +1319,7 @@ class AmbientEngine:
             lights_payload.append({
                 "id": eid,
                 "name": cfg["name"],
-                "icon": cfg.get("icon", "💡"),
+                "icon": cfg.get("icon", "☀"),
                 "is_on": is_on,
                 "in_sync": bool(self.enabled_lights.get(eid, True)),
                 "bri": bri if bri > 0 else 200,
@@ -1357,26 +1357,26 @@ class AmbientEngine:
             if m in ("OFF", "SLEEP"):
                 self.turn_off_lights_and_standby()
                 if self.ui_mode_callback:
-                    self.ui_mode_callback("IDLE", "📱 Pilot Mobilny: Wygaszono wszystkie światła")
+                    self.ui_mode_callback("IDLE", "▣ Pilot Mobilny: Wygaszono wszystkie światła")
             elif m == "MAX_WHITE":
                 self.set_max_white_mode()
                 if self.ui_mode_callback:
-                    self.ui_mode_callback("MAX_WHITE", "📱 Pilot Mobilny: Włączono ☀️ MAX BIEL (100%)")
+                    self.ui_mode_callback("MAX_WHITE", "▣ Pilot Mobilny: Włączono ☀ MAX BIEL (100%)")
             elif m == "IDLE":
                 self.set_manual_passthrough()
                 if self.ui_mode_callback:
-                    self.ui_mode_callback("IDLE", "📱 Pilot Mobilny: Przełączono na 🎛️ Tryb Ręczny")
+                    self.ui_mode_callback("IDLE", "▣ Pilot Mobilny: Przełączono na ⊞ Tryb Ręczny")
             elif m in ("ZWYKLY", "GAMING", "FILM", "NATI", "SPOTIFY"):
                 if m == "SPOTIFY":
                     self.spotify_sync.trigger_immediate_poll()
                 self.trigger_spatial_wave(m)
                 if self.ui_mode_callback:
-                    self.ui_mode_callback(m, f"📱 Pilot Mobilny: Uruchomiono scenę {m}")
+                    self.ui_mode_callback(m, f"▣ Pilot Mobilny: Uruchomiono scenę {m}")
 
         elif action == "sleep_all":
             self.turn_off_lights_and_standby()
             if self.ui_mode_callback:
-                self.ui_mode_callback("IDLE", "📱 Pilot Mobilny: Wygaszono pokój")
+                self.ui_mode_callback("IDLE", "▣ Pilot Mobilny: Wygaszono pokój")
 
         elif action == "sync_all":
             state = bool(payload.get("state", True))
@@ -1421,14 +1421,14 @@ class AmbientEngine:
             if name:
                 self.activate_user_preset(name)
                 if self.ui_mode_callback:
-                    self.ui_mode_callback("IDLE", f"📱 Pilot Mobilny: Wczytano scenę '{name}'")
+                    self.ui_mode_callback("IDLE", f"▣ Pilot Mobilny: Wczytano scenę '{name}'")
 
         elif action == "save_preset":
             name = payload.get("name")
             if name:
                 self.save_current_as_preset(name)
                 if self.ui_mode_callback:
-                    self.ui_mode_callback(self.mode, f"📱 Pilot Mobilny: Zapisano scenę '{name}'")
+                    self.ui_mode_callback(self.mode, f"▣ Pilot Mobilny: Zapisano scenę '{name}'")
 
     # -----------------------------------------------------------------
     # OBSŁUGA ZAPISYWANIA PRESETÓW SCEN I POZYCJI LAMP NA DYSKU
@@ -1576,7 +1576,7 @@ class AmbientEngine:
 
             if external_change:
                 self.enabled_lights[entity_id] = False
-                self.last_override_notice = f"✋ Auto-Override z HA: {LIGHTS_CONFIG[entity_id]['name']}"
+                self.last_override_notice = f"▪ Auto-Override z HA: {LIGHTS_CONFIG[entity_id]['name']}"
 
         if is_initial or self.mode == "IDLE" or not self.enabled_lights.get(entity_id, True):
             prev_ui = self.current_ui_state[entity_id]
@@ -2145,7 +2145,7 @@ class LightControlCard(ctk.CTkFrame):
 
         self.swatch_btn = ctk.CTkButton(
             top_row,
-            text=cfg.get("icon", "💡"),
+            text=cfg.get("icon", "☀"),
             width=34,
             height=34,
             corner_radius=8,
@@ -2181,7 +2181,7 @@ class LightControlCard(ctk.CTkFrame):
 
         self.sync_btn = ctk.CTkButton(
             top_row,
-            text="🔗 SYNC",
+            text="◈ SYNC",
             width=54,
             height=24,
             corner_radius=6,
@@ -2208,7 +2208,7 @@ class LightControlCard(ctk.CTkFrame):
         bri_row = ctk.CTkFrame(self, fg_color="transparent")
         bri_row.pack(fill="x", padx=10, pady=2)
 
-        ctk.CTkLabel(bri_row, text="🔆", font=ctk.CTkFont(size=11), width=18).pack(side="left")
+        ctk.CTkLabel(bri_row, text="☀", font=ctk.CTkFont(size=11), width=18).pack(side="left")
         self.bri_slider = ctk.CTkSlider(
             bri_row,
             from_=1,
@@ -2231,7 +2231,7 @@ class LightControlCard(ctk.CTkFrame):
         ct_row = ctk.CTkFrame(self, fg_color="transparent")
         ct_row.pack(fill="x", padx=10, pady=2)
 
-        ctk.CTkLabel(ct_row, text="🌡️", font=ctk.CTkFont(size=11), width=18).pack(side="left")
+        ctk.CTkLabel(ct_row, text="△", font=ctk.CTkFont(size=11), width=18).pack(side="left")
         self.ct_slider = ctk.CTkSlider(
             ct_row,
             from_=2000,
@@ -2331,9 +2331,9 @@ class LightControlCard(ctk.CTkFrame):
             self.ct_val_lbl.configure(text=f"{kelvin}K")
 
         if in_sync:
-            self.sync_btn.configure(text="🔗 SYNC", fg_color="#0F766E")
+            self.sync_btn.configure(text="◈ SYNC", fg_color="#0F766E")
         else:
-            self.sync_btn.configure(text="✋ RĘCZNY", fg_color="#475569")
+            self.sync_btn.configure(text="▪ RĘCZNY", fg_color="#475569")
 
 
 # =====================================================================
@@ -2351,7 +2351,7 @@ class AmbientStudioApp(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        self.title("✨ Spatial Ambient Studio v7.0 — Spotify Beat & Mobile PWA Center")
+        self.title("✦ Spatial Ambient Studio v7.0 — Spotify Beat & Mobile PWA Center")
         self.geometry("1240x860")
         self.minsize(1120, 780)
         self.configure(fg_color="#090D16")
@@ -2420,14 +2420,14 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkLabel(
             title_frame,
-            text="✨ SPATIAL AMBIENT STUDIO v7.0",
+            text="✦ SPATIAL AMBIENT STUDIO v7.0",
             font=ctk.CTkFont(size=19, weight="bold"),
             text_color="#F8FAFC",
         ).pack(anchor="w")
 
         self.status_label = ctk.CTkLabel(
             title_frame,
-            text=f"📱 Pilot Mobilny aktywny: {self.engine.mobile_server.url}  |  Klawisz [6] ➔ Spotify Beat",
+            text=f"▣ Pilot Mobilny aktywny: {self.engine.mobile_server.url}  |  Klawisz [6] ➔ Spotify Beat",
             font=ctk.CTkFont(size=12),
             text_color="#38BDF8",
         )
@@ -2443,7 +2443,7 @@ class AmbientStudioApp(ctk.CTk):
 
         self.sp_top_lbl = ctk.CTkLabel(
             telemetry_box,
-            text="🎵 Spotify: Sprawdzanie...",
+            text="♫ Spotify: Sprawdzanie...",
             font=ctk.CTkFont(family="Menlo", size=11, weight="bold"),
             text_color="#4ADE80",
         )
@@ -2451,7 +2451,7 @@ class AmbientStudioApp(ctk.CTk):
 
         self.mobile_btn = ctk.CTkButton(
             telemetry_box,
-            text=f"📱 {self.engine.mobile_server.url}",
+            text=f"▣ {self.engine.mobile_server.url}",
             height=28,
             corner_radius=8,
             fg_color="#0284C7",
@@ -2479,7 +2479,7 @@ class AmbientStudioApp(ctk.CTk):
 
     def open_mobile_info_modal(self):
         modal = ctk.CTkToplevel(self)
-        modal.title("📱 Pilot Mobilny (Android / iOS / Home Assistant)")
+        modal.title("▣ Pilot Mobilny (Android / iOS / Home Assistant)")
         modal.geometry("540x380")
         modal.configure(fg_color="#0F172A")
         modal.attributes("-topmost", True)
@@ -2488,7 +2488,7 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkLabel(
             modal,
-            text="📱 STEROWANIE Z TELEFONU I TABLETU",
+            text="▣ STEROWANIE Z TELEFONU I TABLETU",
             font=ctk.CTkFont(size=17, weight="bold"),
             text_color="#38BDF8",
         ).pack(pady=(18, 6))
@@ -2510,7 +2510,7 @@ class AmbientStudioApp(ctk.CTk):
         url_entry.pack(pady=8)
 
         ha_info = (
-            "💡 Wskazówka dla Home Assistant (Bubble Card / Dashboard):\n"
+            "☀ Wskazówka dla Home Assistant (Bubble Card / Dashboard):\n"
             f"Możesz dodać kartę 'Strona internetowa (Webpage)' z adresem {url}\n"
             "lub wywoływać sceny przez Webhooki GET:\n"
             f"• {url}/api/mode/SPOTIFY\n"
@@ -2562,13 +2562,13 @@ class AmbientStudioApp(ctk.CTk):
 
         self.mode_buttons = {}
         modes = [
-            ("SPOTIFY",   "🎵  [6] SPOTIFY (Beat & Okładka)", "#16A34A"),
-            ("ZWYKLY",    "☕  [1] ZWYKŁY (Ciepły Ambient)",  "#0D9488"),
-            ("GAMING",    "🎮  [2] GAMING (Ultra Szybki)",    "#2563EB"),
-            ("FILM",      "🎬  [3] KINO / FILM (Płynny)",     "#D97706"),
-            ("NATI",      "🌸  [4] NATI (Róż ⇄ Fiolet 3s)",   "#DB2777"),
-            ("MAX_WHITE", "☀️  [5] PEŁNA BIEL (100% CCT)",    "#EAB308"),
-            ("IDLE",      "🎛️  [0] TRYB RĘCZNY (HA Live)",    "#475569"),
+            ("SPOTIFY",   "♫  [6] SPOTIFY (Beat & Okładka)", "#16A34A"),
+            ("ZWYKLY",    "♨  [1] ZWYKŁY (Ciepły Ambient)",  "#0D9488"),
+            ("GAMING",    "◈  [2] GAMING (Ultra Szybki)",    "#2563EB"),
+            ("FILM",      "▸  [3] KINO / FILM (Płynny)",     "#D97706"),
+            ("NATI",      "❀  [4] NATI (Róż ⇄ Fiolet 3s)",   "#DB2777"),
+            ("MAX_WHITE", "☀  [5] PEŁNA BIEL (100% CCT)",    "#EAB308"),
+            ("IDLE",      "⊞  [0] TRYB RĘCZNY (HA Live)",    "#475569"),
         ]
 
         for key, label, active_col in modes:
@@ -2599,7 +2599,7 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkButton(
             quick_grid,
-            text="💡 Biel 100%",
+            text="☀ Biel 100%",
             height=28,
             fg_color="#1E293B",
             hover_color="#0284C7",
@@ -2609,7 +2609,7 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkButton(
             quick_grid,
-            text="🌑 Zgaś pokój",
+            text="● Zgaś pokój",
             height=28,
             fg_color="#1E293B",
             hover_color="#DC2626",
@@ -2619,7 +2619,7 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkButton(
             quick_grid,
-            text="🔗 Sync 9/9",
+            text="◈ Sync 9/9",
             height=26,
             fg_color="#1E293B",
             hover_color="#0F766E",
@@ -2629,7 +2629,7 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkButton(
             quick_grid,
-            text="✋ Ręczny 9/9",
+            text="▪ Ręczny 9/9",
             height=26,
             fg_color="#1E293B",
             hover_color="#475569",
@@ -2651,7 +2651,7 @@ class AmbientStudioApp(ctk.CTk):
 
         self.sw_circadian = ctk.CTkSwitch(
             smart_box,
-            text="🌙 Night Shift (21:00+)",
+            text="☾ Night Shift (21:00+)",
             font=ctk.CTkFont(size=11),
             command=self.on_smart_switches,
         )
@@ -2709,18 +2709,18 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkLabel(
             header_bar,
-            text="WSZYSTKIE STREFY ŚWIATŁA (KLIKNIJ 🔗 SYNC ABY WYBRAĆ LAMPY DO BŁYSKÓW)",
+            text="WSZYSTKIE STREFY ŚWIATŁA (KLIKNIJ ◈ SYNC ABY WYBRAĆ LAMPY DO BŁYSKÓW)",
             font=ctk.CTkFont(size=11, weight="bold"),
             text_color="#94A3B8",
         ).pack(side="left")
 
         self.view_switcher = ctk.CTkSegmentedButton(
             header_bar,
-            values=["🎛️ Mikser Kart (3x3)", "🗺️ Mapa Pokoju 2D (Drag & Drop)"],
+            values=["⊞ Mikser Kart (3x3)", "⊡ Mapa Pokoju 2D (Drag & Drop)"],
             command=self.switch_center_view,
             font=ctk.CTkFont(size=12, weight="bold"),
         )
-        self.view_switcher.set("🎛️ Mikser Kart (3x3)")
+        self.view_switcher.set("⊞ Mikser Kart (3x3)")
         self.view_switcher.pack(side="right")
 
         self.center_container = ctk.CTkFrame(center, fg_color="transparent")
@@ -2785,10 +2785,10 @@ class AmbientStudioApp(ctk.CTk):
 
         self.target_scope = ctk.CTkSegmentedButton(
             inspector,
-            values=["🎯 Wybrana lampa", "🏠 Cały pokój (9)"],
+            values=["◈ Wybrana lampa", "⌂ Cały pokój (9)"],
             font=ctk.CTkFont(size=11, weight="bold"),
         )
-        self.target_scope.set("🎯 Wybrana lampa")
+        self.target_scope.set("◈ Wybrana lampa")
         self.target_scope.pack(fill="x", padx=16, pady=(0, 6))
 
         self.wheel_size = 195
@@ -2826,10 +2826,10 @@ class AmbientStudioApp(ctk.CTk):
         presets_grid.grid_columnconfigure((0, 1), weight=1)
 
         studio_presets = [
-            ("🕯️ Świeca 2200K",   None, 2200, "#F97316"),
-            ("☕ Ciepła 3000K",    None, 3000, "#F59E0B"),
-            ("☀️ Neutral 4500K",   None, 4500, "#EAB308"),
-            ("❄️ Dzienna 6500K",   None, 6500, "#38BDF8"),
+            ("▴ Świeca 2200K",   None, 2200, "#F97316"),
+            ("♨ Ciepła 3000K",    None, 3000, "#F59E0B"),
+            ("☀ Neutral 4500K",   None, 4500, "#EAB308"),
+            ("✳ Dzienna 6500K",   None, 6500, "#38BDF8"),
         ]
 
         for idx, (label, rgb_val, k_val, btn_col) in enumerate(studio_presets):
@@ -2865,7 +2865,7 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkButton(
             save_row,
-            text="💾 Zapisz",
+            text="▪ Zapisz",
             width=72,
             height=28,
             fg_color="#0D9488",
@@ -2890,7 +2890,7 @@ class AmbientStudioApp(ctk.CTk):
 
             ctk.CTkButton(
                 row,
-                text=f"✨ {name}",
+                text=f"✦ {name}",
                 anchor="w",
                 height=26,
                 fg_color="#1E293B",
@@ -2918,12 +2918,12 @@ class AmbientStudioApp(ctk.CTk):
         self._last_preset_count = len(self.engine.user_presets)
         self.preset_entry.delete(0, "end")
         self.refresh_user_presets_ui()
-        self.status_label.configure(text=f"💾 Zapisano własną scenę pokoju: '{name}'", text_color="#4ADE80")
+        self.status_label.configure(text=f"▪ Zapisano własną scenę pokoju: '{name}'", text_color="#4ADE80")
 
     def load_user_preset(self, name: str):
         self._highlight_mode_btn("IDLE")
         self.engine.activate_user_preset(name)
-        self.status_label.configure(text=f"✨ Wczytano scenę użytkownika: '{name}'", text_color="#38BDF8")
+        self.status_label.configure(text=f"✦ Wczytano scenę użytkownika: '{name}'", text_color="#38BDF8")
 
     def delete_user_preset(self, name: str):
         self.engine.user_presets.pop(name, None)
@@ -2976,14 +2976,14 @@ class AmbientStudioApp(ctk.CTk):
             text_color="#0F172A" if (rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114) > 150 else "#F8FAFC",
         )
 
-        if self.target_scope.get() == "🏠 Cały pokój (9)":
+        if self.target_scope.get() == "⌂ Cały pokój (9)":
             self.engine.manual_apply_to_all(rgb=rgb, bri=int(255 * self.engine.master_brightness))
             self._highlight_mode_btn("IDLE")
         else:
             self.engine.manual_set_light(self.selected_entity, rgb=rgb, transition=0.12)
 
     def apply_inspector_preset(self, rgb_val, k_val):
-        if self.target_scope.get() == "🏠 Cały pokój (9)":
+        if self.target_scope.get() == "⌂ Cały pokój (9)":
             self.engine.manual_apply_to_all(
                 rgb=rgb_val, kelvin=k_val, bri=int(255 * self.engine.master_brightness)
             )
@@ -3002,7 +3002,7 @@ class AmbientStudioApp(ctk.CTk):
 
         self.crop_lbl = ctk.CTkLabel(
             bottom,
-            text="🖥️ Analiza ekranu: Pełny obraz  |  Luma L: 0.00  P: 0.00",
+            text="▣ Analiza ekranu: Pełny obraz  |  Luma L: 0.00  P: 0.00",
             font=ctk.CTkFont(family="Menlo", size=11),
             text_color="#94A3B8",
         )
@@ -3010,7 +3010,7 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkButton(
             bottom,
-            text="🚪 Zamknij Studio i Zgaś Światła",
+            text="▯ Zamknij Studio i Zgaś Światła",
             fg_color="#991B1B",
             hover_color="#DC2626",
             height=30,
@@ -3020,7 +3020,7 @@ class AmbientStudioApp(ctk.CTk):
 
         ctk.CTkButton(
             bottom,
-            text="⏸️ Zamknij (Zostaw światła włączone)",
+            text="❚❚ Zamknij (Zostaw światła włączone)",
             fg_color="#1E293B",
             hover_color="#334155",
             height=30,
@@ -3053,13 +3053,13 @@ class AmbientStudioApp(ctk.CTk):
 
         c.create_rectangle(30, 25, w - 30, h - 25, outline="#1E293B", width=2, fill="#0B1120")
         c.create_rectangle(w * 0.32, 35, w * 0.68, 72, outline="#334155", fill="#1E293B")
-        c.create_text(w * 0.50, 53, text="🖥️ BIURKO & MONITOR (Przeciągnij lampy myszką)", fill="#94A3B8", font=("Menlo", 10, "bold"))
+        c.create_text(w * 0.50, 53, text="▣ BIURKO & MONITOR (Przeciągnij lampy myszką)", fill="#94A3B8", font=("Menlo", 10, "bold"))
 
         c.create_rectangle(w * 0.33, h * 0.62, w * 0.67, h * 0.80, outline="#334155", fill="#162032")
-        c.create_text(w * 0.50, h * 0.71, text="🛋️ NAROŻNIK / SOFA", fill="#64748B", font=("Menlo", 10, "bold"))
+        c.create_text(w * 0.50, h * 0.71, text="❖ NAROŻNIK / SOFA", fill="#64748B", font=("Menlo", 10, "bold"))
 
-        c.create_text(w * 0.18, h * 0.88, text="☕ STREFA KUCHNI", fill="#475569", font=("Menlo", 10, "bold"))
-        c.create_text(w * 0.83, h * 0.88, text="🚪 WEJŚCIE", fill="#475569", font=("Menlo", 10, "bold"))
+        c.create_text(w * 0.18, h * 0.88, text="♨ STREFA KUCHNI", fill="#475569", font=("Menlo", 10, "bold"))
+        c.create_text(w * 0.83, h * 0.88, text="▯ WEJŚCIE", fill="#475569", font=("Menlo", 10, "bold"))
 
         for eid, cfg in LIGHTS_CONFIG.items():
             px, py = cfg["pos"]
@@ -3151,7 +3151,7 @@ class AmbientStudioApp(ctk.CTk):
             self._highlight_mode_btn("IDLE")
             self.engine.set_manual_passthrough()
             self.status_label.configure(
-                text=f"Tryb: 🎛️ Sterowanie ręczne HA Live  |  📱 Pilot: {self.engine.mobile_server.url}",
+                text=f"Tryb: ⊞ Sterowanie ręczne HA Live  |  ▣ Pilot: {self.engine.mobile_server.url}",
                 text_color="#38BDF8",
             )
             return
@@ -3161,7 +3161,7 @@ class AmbientStudioApp(ctk.CTk):
 
         self._highlight_mode_btn(mode_key)
         self.status_label.configure(
-            text=f"🌊 Płynna fala przestrzenna ➔ Uruchamianie trybu: {mode_key}...",
+            text=f"≈ Płynna fala przestrzenna ➔ Uruchamianie trybu: {mode_key}...",
             text_color="#4ADE80" if mode_key == "SPOTIFY" else "#38BDF8",
         )
         self.engine.trigger_spatial_wave(mode_key)
@@ -3170,7 +3170,7 @@ class AmbientStudioApp(ctk.CTk):
         self._highlight_mode_btn("MAX_WHITE")
         self.engine.set_max_white_mode()
         self.status_label.configure(
-            text=f"☀️ Tryb: PEŁNA BIEL (100% jasności | Natywna barwa: {self.engine.white_temp_kelvin}K)",
+            text=f"☀ Tryb: PEŁNA BIEL (100% jasności | Natywna barwa: {self.engine.white_temp_kelvin}K)",
             text_color="#FACC15",
         )
 
@@ -3178,7 +3178,7 @@ class AmbientStudioApp(ctk.CTk):
         self._highlight_mode_btn("IDLE")
         self.engine.turn_off_lights_and_standby()
         self.status_label.configure(
-            text="🌑 Wszystkie światła wygaszone (Tryb Ręczny / Standby)",
+            text="● Wszystkie światła wygaszone (Tryb Ręczny / Standby)",
             text_color="#F87171",
         )
 
@@ -3224,9 +3224,9 @@ class AmbientStudioApp(ctk.CTk):
         self.sp_swatch2.configure(fg_color=rgb_to_hex(sp.color2_rgb))
         short_title = (sp.title[:22] + "…") if len(sp.title) > 23 else sp.title
         if sp.is_playing:
-            self.sp_top_lbl.configure(text=f"🎵 {short_title} ({int(sp.bpm)} BPM)", text_color="#4ADE80")
+            self.sp_top_lbl.configure(text=f"♫ {short_title} ({int(sp.bpm)} BPM)", text_color="#4ADE80")
         else:
-            self.sp_top_lbl.configure(text=f"⏸️ {short_title} (EKG)", text_color="#94A3B8")
+            self.sp_top_lbl.configure(text=f"❚❚ {short_title} (EKG)", text_color="#94A3B8")
 
         # Synchronizacja suwaków globalnych, jeśli zmieniono je na telefonie
         self.lbl_master.configure(text=f"Skala Jasności: {int(self.engine.master_brightness * 100)}%")
@@ -3240,9 +3240,9 @@ class AmbientStudioApp(ctk.CTk):
         )
         self.crop_lbl.configure(
             text=(
-                f"🖥️ Auto-Crop: {self.engine.crop_info}  |  "
+                f"▣ Auto-Crop: {self.engine.crop_info}  |  "
                 f"Luma L: {self.engine.luma_left:.2f}  P: {self.engine.luma_right:.2f}  |  "
-                f"🎵 Spotify: {sp.title} — {sp.artist}"
+                f"♫ Spotify: {sp.title} — {sp.artist}"
             )
         )
 
@@ -3263,7 +3263,7 @@ class AmbientStudioApp(ctk.CTk):
         self.destroy()
 
     def on_exit(self):
-        self.status_label.configure(text="🌙 Wygaszanie świateł i zamykanie sesji...", text_color="#F87171")
+        self.status_label.configure(text="☾ Wygaszanie świateł i zamykanie sesji...", text_color="#F87171")
         self.update()
         self.engine.turn_off_all_smoothly()
         time.sleep(0.25)
@@ -3272,9 +3272,16 @@ class AmbientStudioApp(ctk.CTk):
 
 if __name__ == "__main__":
     engine = AmbientEngine(dev_mode="--dev" in sys.argv)
+    app = AmbientStudioApp(engine)
 
-    worker = threading.Thread(target=engine.run_loop, daemon=True)
+    def _delayed_worker():
+        time.sleep(0.6)
+        engine.run_loop()
+
+    worker = threading.Thread(target=_delayed_worker, daemon=True)
     worker.start()
 
-    app = AmbientStudioApp(engine)
+    app.update_idletasks()
+    app.deiconify()
+    app.lift()
     app.mainloop()
